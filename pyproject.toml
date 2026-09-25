@@ -25,7 +25,7 @@ build-backend = "hatchling.build"
 packages = ["nitka"]
 
 [tool.hatch.build.targets.sdist]
-include = ["nitka", "alembic", "tests", "pyproject.toml", "uv.lock", "README.md", "alembic.ini", "compose.yaml", "Makefile", ".env.example", "main.py"]
+include = ["nitka", "alembic", "tests", "pyproject.toml", "uv.lock", "README.md", "alembic.ini", "compose.yaml", "Makefile", ".env.example"]
 
 [dependency-groups]
 dev = ["httpx>=0.28,<1", "pytest>=8,<10", "ruff>=0.11,<1"]

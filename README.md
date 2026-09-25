@@ -367,8 +367,8 @@ After importing the supplied dataset, the `/stats` response was:
 
 ```bash
 uv run pytest -q
-uv run ruff check nitka tests alembic main.py
-uv run ruff format --check nitka tests alembic main.py
+uv run ruff check nitka tests alembic
+uv run ruff format --check nitka tests alembic
 ```
 
 Tests create and drop a unique PostgreSQL schema for each test and never touch

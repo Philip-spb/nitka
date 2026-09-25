@@ -22,5 +22,5 @@ test:
 	uv run pytest -q
 
 lint:
-	uv run ruff check nitka tests alembic main.py
-	uv run ruff format --check nitka tests alembic main.py
+	uv run ruff check nitka tests alembic
+	uv run ruff format --check nitka tests alembic
