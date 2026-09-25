@@ -96,16 +96,10 @@ class Document(Base):
             "citation_count IS NULL OR citation_count >= 0",
             name="documents_citation_count_nonnegative",
         ),
-        CheckConstraint(
-            "page_count IS NULL OR page_count >= 0", name="documents_page_count_nonnegative"
-        ),
-        CheckConstraint(
-            "word_count IS NULL OR word_count >= 0", name="documents_word_count_nonnegative"
-        ),
+        CheckConstraint("page_count IS NULL OR page_count >= 0", name="documents_page_count_nonnegative"),
+        CheckConstraint("word_count IS NULL OR word_count >= 0", name="documents_word_count_nonnegative"),
         CheckConstraint("completeness_score BETWEEN 0 AND 100", name="documents_score_range"),
-        CheckConstraint(
-            "quality_tier IN ('low', 'medium', 'high')", name="documents_quality_tier_valid"
-        ),
+        CheckConstraint("quality_tier IN ('low', 'medium', 'high')", name="documents_quality_tier_valid"),
         UniqueConstraint("doi", name="documents_doi_unique"),
         UniqueConstraint("content_fingerprint", name="documents_content_fingerprint_unique"),
         Index("documents_published_at_idx", "published_at"),
@@ -159,9 +153,7 @@ class IngestionIssue(Base):
     __tablename__ = "ingestion_issues"
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    ingestion_run_id: Mapped[int] = mapped_column(
-        ForeignKey("ingestion_runs.id", ondelete="CASCADE"), nullable=False
-    )
+    ingestion_run_id: Mapped[int] = mapped_column(ForeignKey("ingestion_runs.id", ondelete="CASCADE"), nullable=False)
     source_file: Mapped[str] = mapped_column(String(1024), nullable=False)
     source_line: Mapped[int] = mapped_column(Integer, nullable=False)
     external_id: Mapped[str | None] = mapped_column(String(255))

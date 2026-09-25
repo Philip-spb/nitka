@@ -16,6 +16,7 @@ analyze_jsonl.py
 .pytest_cache/
 .ruff_cache/
 .coverage
+.DS_Store
 
 # Virtual environments
 .venv

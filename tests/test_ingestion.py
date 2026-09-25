@@ -26,9 +26,7 @@ def test_imports_normalized_documents_and_records_all_outcomes(db_engine):
     with Session(db_engine) as session:
         assert session.scalar(select(func.count(Document.id))) == 5
         document = (
-            session.execute(
-                select(Document).where(Document.external_id == "shared-id").order_by(Document.id)
-            )
+            session.execute(select(Document).where(Document.external_id == "shared-id").order_by(Document.id))
             .scalars()
             .first()
         )
@@ -191,9 +189,7 @@ def test_changed_document_content_is_stored_as_a_new_document(db_engine, tmp_pat
         assert session.scalar(select(func.count(Document.id))) == 2
 
 
-def test_fatal_import_failure_rolls_back_documents_and_records_failed_run(
-    db_engine, tmp_path, monkeypatch
-):
+def test_fatal_import_failure_rolls_back_documents_and_records_failed_run(db_engine, tmp_path, monkeypatch):
     from nitka import ingestion
 
     (tmp_path / "records.jsonl").write_text('{"title":"First"}\n', encoding="utf-8")

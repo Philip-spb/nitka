@@ -30,19 +30,13 @@ class IngestionRepository:
             predicates.append(Document.content_fingerprint.in_(fingerprints))
         if dois:
             predicates.append(Document.doi.in_(dois))
-        existing_documents = (
-            self.session.scalars(select(Document).where(or_(*predicates))).all()
-            if predicates
-            else []
-        )
+        existing_documents = self.session.scalars(select(Document).where(or_(*predicates))).all() if predicates else []
         documents_by_fingerprint = {
             document.content_fingerprint: document
             for document in existing_documents
             if document.content_fingerprint is not None
         }
-        documents_by_doi = {
-            document.doi: document for document in existing_documents if document.doi is not None
-        }
+        documents_by_doi = {document.doi: document for document in existing_documents if document.doi is not None}
         return documents_by_fingerprint, documents_by_doi
 
     def get_or_create_author(self, name: str) -> Author:
@@ -54,9 +48,7 @@ class IngestionRepository:
     def get_or_create_tag(self, name: str) -> Tag:
         return self._get_or_create(Tag, name, self.tag_cache)
 
-    def _get_or_create(
-        self, model: type[NamedEntity], name: str, cache: dict[str, NamedEntity]
-    ) -> NamedEntity:
+    def _get_or_create(self, model: type[NamedEntity], name: str, cache: dict[str, NamedEntity]) -> NamedEntity:
         if name in cache:
             return cache[name]
         entity = self.session.scalar(select(model).where(model.name == name))

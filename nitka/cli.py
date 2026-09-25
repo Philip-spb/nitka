@@ -19,9 +19,7 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="nitka")
     subcommands = parser.add_subparsers(dest="command", required=True)
     ingest_command = subcommands.add_parser("ingest", help="Import one JSONL or NDJSON file")
-    ingest_command.add_argument(
-        "--input", type=Path, required=True, help="Path to the file to import"
-    )
+    ingest_command.add_argument("--input", type=Path, required=True, help="Path to the file to import")
     arguments = parser.parse_args(argv)
     settings = Settings()
     logger.info("Starting ingestion for %s", arguments.input)
@@ -33,7 +31,5 @@ def main(argv: list[str] | None = None) -> int:
     except (RuntimeError, ValueError) as error:
         logger.error("Ingestion failed: %s", error)
         return 1
-    logger.info(
-        "Ingestion completed: %s", json.dumps(summary.model_dump(mode="json"), ensure_ascii=False)
-    )
+    logger.info("Ingestion completed: %s", json.dumps(summary.model_dump(mode="json"), ensure_ascii=False))
     return 0

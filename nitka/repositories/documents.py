@@ -38,9 +38,7 @@ class DocumentRepository:
         if tag:
             statement = statement.where(Document.tags.any(Tag.name == tag.strip().casefold()))
         if organization:
-            statement = statement.where(
-                Document.organization.has(Organization.name == organization.strip())
-            )
+            statement = statement.where(Document.organization.has(Organization.name == organization.strip()))
         if status:
             statement = statement.where(Document.status == status.strip().casefold())
         if query:
@@ -62,14 +60,10 @@ class DocumentRepository:
             lazyload(Document.tags),
         )
         if sort == "score":
-            statement = statement.order_by(
-                Document.completeness_score.desc(), Document.id.asc()
-            )
+            statement = statement.order_by(Document.completeness_score.desc(), Document.id.asc())
         else:
             statement = statement.order_by(Document.id.asc())
-        documents = self.session.scalars(
-            statement.offset((page - 1) * page_size).limit(page_size)
-        ).all()
+        documents = self.session.scalars(statement.offset((page - 1) * page_size).limit(page_size)).all()
         return documents, total
 
     def get_document(self, document_id: int) -> Document | None:
@@ -95,9 +89,7 @@ class DocumentRepository:
             "authors": self.session.scalar(select(func.count(Author.id))) or 0,
             "organizations": self.session.scalar(select(func.count(Organization.id))) or 0,
             "tags": self.session.scalar(select(func.count(Tag.id))) or 0,
-            "average_completeness_score": self.session.scalar(
-                select(func.avg(Document.completeness_score))
-            ),
+            "average_completeness_score": self.session.scalar(select(func.avg(Document.completeness_score))),
             "quality_tiers": quality_tiers,
             "statuses": statuses,
             "organizations_by_document": organizations_by_document,

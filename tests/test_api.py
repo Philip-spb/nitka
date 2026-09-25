@@ -16,9 +16,7 @@ FIXTURE_FILE = Path(__file__).parent / "fixtures" / "sample.jsonl"
 
 @pytest.fixture
 def client(db_engine, tmp_path) -> TestClient:
-    settings = Settings(
-        database_url="postgresql+psycopg://unused", input_dir=tmp_path / "input_docs"
-    )
+    settings = Settings(database_url="postgresql+psycopg://unused", input_dir=tmp_path / "input_docs")
     return TestClient(create_app(settings=settings, engine=db_engine))
 
 
@@ -59,16 +57,9 @@ def test_documents_list_supports_pagination_filters_literal_search_and_score_sor
     assert payload["items"][0]["completeness_score"] >= payload["items"][1]["completeness_score"]
 
     assert client.get("/documents", params={"tag": "ENERGY"}).json()["total"] == 2
-    assert (
-        client.get("/documents", params={"organization": "Example Institute"}).json()["total"] == 1
-    )
+    assert client.get("/documents", params={"organization": "Example Institute"}).json()["total"] == 1
     assert client.get("/documents", params={"status": "published"}).json()["total"] == 1
-    assert (
-        client.get(
-            "/documents", params={"date_from": "2024-01-10", "date_to": "2024-01-15"}
-        ).json()["total"]
-        == 2
-    )
+    assert client.get("/documents", params={"date_from": "2024-01-10", "date_to": "2024-01-15"}).json()["total"] == 2
     assert client.get("/documents", params={"q": "100%_energy"}).json()["total"] == 1
 
 
@@ -124,12 +115,7 @@ def test_document_detail_and_stats_include_related_entities_and_scoring(client):
 
 def test_api_returns_validation_and_not_found_responses(client):
     assert client.get("/documents", params={"page_size": 101}).status_code == 422
-    assert (
-        client.get(
-            "/documents", params={"date_from": "2024-02-01", "date_to": "2024-01-01"}
-        ).status_code
-        == 422
-    )
+    assert client.get("/documents", params={"date_from": "2024-02-01", "date_to": "2024-01-01"}).status_code == 422
     assert client.get("/documents/99999").status_code == 404
 
 

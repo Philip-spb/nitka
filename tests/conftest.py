@@ -8,9 +8,7 @@ import pytest
 from sqlalchemy import create_engine, text
 from sqlalchemy.engine import Engine
 
-TEST_DATABASE_URL = os.getenv(
-    "TEST_DATABASE_URL", "postgresql+psycopg://nitka:nitka@127.0.0.1:5433/nitka"
-)
+TEST_DATABASE_URL = os.getenv("TEST_DATABASE_URL", "postgresql+psycopg://nitka:nitka@127.0.0.1:5433/nitka")
 
 
 @pytest.fixture

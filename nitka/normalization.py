@@ -83,9 +83,7 @@ def record_fingerprint(document: dict[str, Any]) -> str:
         return value
 
     payload = {field: canonical_value(document[field]) for field in _DOCUMENT_FIELDS}
-    encoded = json.dumps(payload, ensure_ascii=False, separators=(",", ":"), sort_keys=True).encode(
-        "utf-8"
-    )
+    encoded = json.dumps(payload, ensure_ascii=False, separators=(",", ":"), sort_keys=True).encode("utf-8")
     return hashlib.sha256(b"record-v1\x00" + encoded).hexdigest()
 
 
@@ -103,9 +101,7 @@ def _issue(issues: list[Issue], field: str, reason: str, value: Any) -> None:
     issues.append(Issue(field=field, reason=reason, value_preview=_preview(value, field=field)))
 
 
-def _optional_text(
-    record: dict[str, Any], field: str, issues: list[Issue], *, placeholder: bool = False
-) -> str | None:
+def _optional_text(record: dict[str, Any], field: str, issues: list[Issue], *, placeholder: bool = False) -> str | None:
     value = record.get(field)
     if value is None:
         return None
@@ -307,9 +303,7 @@ def normalize_record(value: Any) -> NormalizationResult:
     for field in ("external_id", "abstract", "body", "region", "source_name"):
         document[field] = _optional_text(value, field, issues)
     document["author_name"] = _optional_text(value, "author_name", issues, placeholder=True)
-    document["organization_name"] = _optional_text(
-        value, "organization_name", issues, placeholder=True
-    )
+    document["organization_name"] = _optional_text(value, "organization_name", issues, placeholder=True)
     document["published_at"] = _parse_date(value, "published_at", issues)
     document["updated_at"] = _parse_date(value, "updated_at", issues)
     document["open_access"] = _parse_bool(value, "open_access", issues)
@@ -322,11 +316,7 @@ def normalize_record(value: Any) -> NormalizationResult:
     document["doi"] = _parse_doi(value, issues)
     for field in ("citation_count", "page_count", "word_count"):
         document[field] = _parse_count(value, field, issues)
-    if (
-        document["published_at"]
-        and document["updated_at"]
-        and document["updated_at"] < document["published_at"]
-    ):
+    if document["published_at"] and document["updated_at"] and document["updated_at"] < document["published_at"]:
         _issue(issues, "updated_at", "updated_before_published", value.get("updated_at"))
     document["completeness_score"], document["quality_tier"] = _score(document)
     return NormalizationResult(document=document, issues=issues)

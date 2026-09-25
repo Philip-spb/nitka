@@ -170,9 +170,7 @@ class Ingestor:
         return summary
 
     def _acquire_lock(self) -> None:
-        locked = self._session.scalar(
-            text("SELECT pg_try_advisory_xact_lock(:key)"), {"key": _IMPORT_LOCK}
-        )
+        locked = self._session.scalar(text("SELECT pg_try_advisory_xact_lock(:key)"), {"key": _IMPORT_LOCK})
         if not locked:
             raise IngestionBusyError("another ingestion is already running")
 
@@ -207,9 +205,7 @@ class Ingestor:
         records = self._prepare_pending()
         fingerprints = {record.fingerprint for record in records if record.fingerprint}
         dois = {record.doi for record in records if record.doi}
-        documents_by_fingerprint, documents_by_doi = self._repository.find_document_indexes(
-            fingerprints, dois
-        )
+        documents_by_fingerprint, documents_by_doi = self._repository.find_document_indexes(fingerprints, dois)
 
         for prepared in records:
             self._process_record(prepared, documents_by_fingerprint, documents_by_doi)
@@ -225,9 +221,7 @@ class Ingestor:
                 PreparedRecord(
                     record=record,
                     result=result,
-                    fingerprint=(
-                        _deduplication_fingerprint(document) if document is not None else None
-                    ),
+                    fingerprint=(_deduplication_fingerprint(document) if document is not None else None),
                     doi=document["doi"] if document is not None else None,
                 )
             )
@@ -242,9 +236,7 @@ class Ingestor:
         record = prepared.record
         result = prepared.result
         external_id = (
-            result.document["external_id"]
-            if result.document is not None
-            else _external_id_for_log(record.value)
+            result.document["external_id"] if result.document is not None else _external_id_for_log(record.value)
         )
         for issue in result.issues:
             self._add_issue(record.source_file, record.source_line, issue, external_id)
@@ -270,9 +262,7 @@ class Ingestor:
 
         document_data = result.document
         duplicate_by_doi = documents_by_doi.get(prepared.doi) if prepared.doi else None
-        duplicate_by_content = (
-            documents_by_fingerprint.get(prepared.fingerprint) if prepared.fingerprint else None
-        )
+        duplicate_by_content = documents_by_fingerprint.get(prepared.fingerprint) if prepared.fingerprint else None
         duplicate = duplicate_by_doi or duplicate_by_content
         if duplicate is not None:
             self._record_duplicate(
@@ -288,14 +278,8 @@ class Ingestor:
         author_name = document_data.pop("author_name")
         organization_name = document_data.pop("organization_name")
         tags = document_data.pop("tags")
-        author = (
-            self._repository.get_or_create_author(author_name) if author_name else None
-        )
-        organization = (
-            self._repository.get_or_create_organization(organization_name)
-            if organization_name
-            else None
-        )
+        author = self._repository.get_or_create_author(author_name) if author_name else None
+        organization = self._repository.get_or_create_organization(organization_name) if organization_name else None
         document = Document(
             **document_data,
             content_fingerprint=prepared.fingerprint,
@@ -321,18 +305,9 @@ class Ingestor:
     ) -> None:
         if duplicate.id is None:
             self._session.flush()
-        if (
-            duplicate_by_doi
-            and prepared.fingerprint
-            and duplicate.content_fingerprint != prepared.fingerprint
-        ):
+        if duplicate_by_doi and prepared.fingerprint and duplicate.content_fingerprint != prepared.fingerprint:
             reason = "duplicate_conflicting_content"
-        elif (
-            duplicate_by_content
-            and prepared.doi
-            and duplicate.doi
-            and duplicate.doi != prepared.doi
-        ):
+        elif duplicate_by_content and prepared.doi and duplicate.doi and duplicate.doi != prepared.doi:
             reason = "duplicate_conflicting_doi"
         else:
             reason = "duplicate_document"

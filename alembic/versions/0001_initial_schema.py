@@ -82,16 +82,10 @@ def upgrade() -> None:
             "citation_count IS NULL OR citation_count >= 0",
             name="documents_citation_count_nonnegative",
         ),
-        sa.CheckConstraint(
-            "page_count IS NULL OR page_count >= 0", name="documents_page_count_nonnegative"
-        ),
-        sa.CheckConstraint(
-            "word_count IS NULL OR word_count >= 0", name="documents_word_count_nonnegative"
-        ),
+        sa.CheckConstraint("page_count IS NULL OR page_count >= 0", name="documents_page_count_nonnegative"),
+        sa.CheckConstraint("word_count IS NULL OR word_count >= 0", name="documents_word_count_nonnegative"),
         sa.CheckConstraint("completeness_score BETWEEN 0 AND 100", name="documents_score_range"),
-        sa.CheckConstraint(
-            "quality_tier IN ('low', 'medium', 'high')", name="documents_quality_tier_valid"
-        ),
+        sa.CheckConstraint("quality_tier IN ('low', 'medium', 'high')", name="documents_quality_tier_valid"),
         sa.UniqueConstraint("doi", name="documents_doi_unique"),
         sa.UniqueConstraint("content_fingerprint", name="documents_content_fingerprint_unique"),
     )
@@ -124,9 +118,7 @@ def upgrade() -> None:
             sa.ForeignKey("documents.id", ondelete="CASCADE"),
             primary_key=True,
         ),
-        sa.Column(
-            "tag_id", sa.Integer(), sa.ForeignKey("tags.id", ondelete="CASCADE"), primary_key=True
-        ),
+        sa.Column("tag_id", sa.Integer(), sa.ForeignKey("tags.id", ondelete="CASCADE"), primary_key=True),
     )
     op.create_table(
         "ingestion_issues",
@@ -145,9 +137,7 @@ def upgrade() -> None:
         sa.Column("severity", sa.String(length=20), nullable=False, server_default="warning"),
         sa.Column("value_preview", sa.String(length=200), nullable=False),
     )
-    op.create_index(
-        "document_tags_tag_id_document_id_idx", "document_tags", ["tag_id", "document_id"]
-    )
+    op.create_index("document_tags_tag_id_document_id_idx", "document_tags", ["tag_id", "document_id"])
 
 
 def downgrade() -> None:

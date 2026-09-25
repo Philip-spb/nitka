@@ -105,9 +105,7 @@ def test_title_rejects_text_postgres_cannot_store(value):
     assert warnings_for(result, "title")
 
 
-@pytest.mark.parametrize(
-    "field", ["abstract", "body", "external_id", "author_name", "organization_name"]
-)
+@pytest.mark.parametrize("field", ["abstract", "body", "external_id", "author_name", "organization_name"])
 @pytest.mark.parametrize("value", ["Bad\x00text", "Bad\ud800text"])
 def test_optional_text_unsafe_for_postgres_becomes_null(field, value):
     result = normalize_record({"title": "Example", field: value})
@@ -117,9 +115,7 @@ def test_optional_text_unsafe_for_postgres_becomes_null(field, value):
 
 def test_issue_previews_are_bounded_json_safe_and_do_not_leak_body():
     body = "PRIVATE BODY " * 100 + "\x00"
-    result = normalize_record(
-        {"title": "Example", "body": body, "external_id": {"value": "x" * 1000}}
-    )
+    result = normalize_record({"title": "Example", "body": body, "external_id": {"value": "x" * 1000}})
     body_issue = warnings_for(result, "body")[0]
     assert "PRIVATE BODY" not in body_issue.value_preview
     assert str(len(body)) in body_issue.value_preview
@@ -171,9 +167,7 @@ def test_invalid_nullable_boolean_becomes_null_with_warning(value):
 
 
 def test_dates_are_parsed_and_inverted_order_is_warned():
-    result = normalize_record(
-        {"title": "Example", "published_at": 20240115, "updated_at": "2024-01-14"}
-    )
+    result = normalize_record({"title": "Example", "published_at": 20240115, "updated_at": "2024-01-14"})
     assert str(result.document["published_at"]) == "2024-01-15"
     assert str(result.document["updated_at"]) == "2024-01-14"
     assert any(issue.reason == "updated_before_published" for issue in result.issues)
@@ -187,9 +181,7 @@ def test_missing_or_invalid_dates_become_null_with_warning(value):
 
 
 def test_tags_normalize_dedupe_and_discard_invalid_items():
-    result = normalize_record(
-        {"title": "Example", "tags": [" Energy ", "energy", "", None, 4, "Policy"]}
-    )
+    result = normalize_record({"title": "Example", "tags": [" Energy ", "energy", "", None, 4, "Policy"]})
     assert result.document["tags"] == ["energy", "policy"]
     assert len(warnings_for(result, "tags")) == 3
 
