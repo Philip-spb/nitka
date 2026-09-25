@@ -15,7 +15,13 @@ from sqlalchemy.orm import Session
 
 from nitka.eventlog import emit
 from nitka.models import Author, Document, IngestionIssue, IngestionRun, Organization, Tag
-from nitka.normalization import Issue, content_fingerprint, normalize_record, record_fingerprint
+from nitka.normalization import (
+    Issue,
+    NormalizationResult,
+    content_fingerprint,
+    normalize_record,
+    record_fingerprint,
+)
 
 SUPPORTED_SUFFIXES = {".jsonl", ".ndjson"}
 _IMPORT_LOCK = 4_782_311_903
@@ -31,6 +37,14 @@ class PendingRecord:
     source_file: str
     source_line: int
     value: Any
+
+
+@dataclass(frozen=True)
+class PreparedRecord:
+    record: PendingRecord
+    result: NormalizationResult
+    fingerprint: str | None
+    doi: str | None
 
 
 def _input_file(path: Path) -> Path:
@@ -165,18 +179,36 @@ class Ingestor:
     def _process_pending(self) -> None:
         if not self.pending:
             return
-        normalized_records = [(record, normalize_record(record.value)) for record in self.pending]
-        fingerprints = {
-            fingerprint
-            for _, result in normalized_records
-            if result.document is not None
-            if (fingerprint := _deduplication_fingerprint(result.document)) is not None
-        }
-        dois = {
-            result.document["doi"]
-            for _, result in normalized_records
-            if result.document is not None and result.document["doi"] is not None
-        }
+        records = self._prepare_pending()
+        documents_by_fingerprint, documents_by_doi = self._existing_document_indexes(records)
+
+        for prepared in records:
+            self._process_record(prepared, documents_by_fingerprint, documents_by_doi)
+        self._session.flush()
+        self.pending.clear()
+
+    def _prepare_pending(self) -> list[PreparedRecord]:
+        prepared_records = []
+        for record in self.pending:
+            result = normalize_record(record.value)
+            document = result.document
+            prepared_records.append(
+                PreparedRecord(
+                    record=record,
+                    result=result,
+                    fingerprint=(
+                        _deduplication_fingerprint(document) if document is not None else None
+                    ),
+                    doi=document["doi"] if document is not None else None,
+                )
+            )
+        return prepared_records
+
+    def _existing_document_indexes(
+        self, records: list[PreparedRecord]
+    ) -> tuple[dict[str, Document], dict[str, Document]]:
+        fingerprints = {record.fingerprint for record in records if record.fingerprint}
+        dois = {record.doi for record in records if record.doi}
         predicates = []
         if fingerprints:
             predicates.append(Document.content_fingerprint.in_(fingerprints))
@@ -195,91 +227,118 @@ class Ingestor:
         documents_by_doi = {
             document.doi: document for document in existing_documents if document.doi is not None
         }
+        return documents_by_fingerprint, documents_by_doi
 
-        for record, result in normalized_records:
-            external_id = (
-                result.document["external_id"]
-                if result.document is not None
-                else _external_id_for_log(record.value)
+    def _process_record(
+        self,
+        prepared: PreparedRecord,
+        documents_by_fingerprint: dict[str, Document],
+        documents_by_doi: dict[str, Document],
+    ) -> None:
+        record = prepared.record
+        result = prepared.result
+        external_id = (
+            result.document["external_id"]
+            if result.document is not None
+            else _external_id_for_log(record.value)
+        )
+        for issue in result.issues:
+            self._add_issue(record.source_file, record.source_line, issue, external_id)
+            emit(
+                "record_warning",
+                file=record.source_file,
+                line=record.source_line,
+                field=issue.field,
+                reason=issue.reason,
             )
-            for issue in result.issues:
-                self._add_issue(record.source_file, record.source_line, issue, external_id)
-                emit(
-                    "record_warning",
-                    file=record.source_file,
-                    line=record.source_line,
-                    field=issue.field,
-                    reason=issue.reason,
-                )
-            if result.document is None:
-                self.counters["skipped"] += 1
-                reason = result.issues[0].reason if result.issues else "invalid_document"
-                emit(
-                    "document_not_inserted",
-                    file=record.source_file,
-                    line=record.source_line,
-                    external_id=external_id,
-                    title=None,
-                    reason=reason,
-                )
-                continue
+        if result.document is None:
+            self.counters["skipped"] += 1
+            reason = result.issues[0].reason if result.issues else "invalid_document"
+            emit(
+                "document_not_inserted",
+                file=record.source_file,
+                line=record.source_line,
+                external_id=external_id,
+                title=None,
+                reason=reason,
+            )
+            return
 
-            document_data = result.document
-            fingerprint = _deduplication_fingerprint(document_data)
-            doi = document_data["doi"]
-            duplicate_by_doi = documents_by_doi.get(doi) if doi else None
-            duplicate_by_content = (
-                documents_by_fingerprint.get(fingerprint) if fingerprint else None
+        document_data = result.document
+        duplicate_by_doi = documents_by_doi.get(prepared.doi) if prepared.doi else None
+        duplicate_by_content = (
+            documents_by_fingerprint.get(prepared.fingerprint) if prepared.fingerprint else None
+        )
+        duplicate = duplicate_by_doi or duplicate_by_content
+        if duplicate is not None:
+            self._record_duplicate(
+                record,
+                prepared,
+                duplicate,
+                duplicate_by_doi,
+                duplicate_by_content,
+                external_id,
             )
-            duplicate = duplicate_by_doi or duplicate_by_content
-            if duplicate is not None:
-                if duplicate.id is None:
-                    self._session.flush()
-                if (
-                    duplicate_by_doi
-                    and fingerprint
-                    and duplicate.content_fingerprint != fingerprint
-                ):
-                    reason = "duplicate_conflicting_content"
-                elif duplicate_by_content and doi and duplicate.doi and duplicate.doi != doi:
-                    reason = "duplicate_conflicting_doi"
-                else:
-                    reason = "duplicate_document"
-                self._add_issue(
-                    record.source_file,
-                    record.source_line,
-                    Issue("document", reason, str(duplicate.id)),
-                    external_id,
-                )
-                self.counters["already_imported"] += 1
-                continue
+            return
 
-            author_name = document_data.pop("author_name")
-            organization_name = document_data.pop("organization_name")
-            tags = document_data.pop("tags")
-            author = (
-                self._get_or_create(Author, author_name, self.author_cache) if author_name else None
-            )
-            organization = (
-                self._get_or_create(Organization, organization_name, self.organization_cache)
-                if organization_name
-                else None
-            )
-            document = Document(
-                **document_data,
-                content_fingerprint=fingerprint,
-                author=author,
-                organization=organization,
-            )
-            document.tags = [self._get_or_create(Tag, tag, self.tag_cache) for tag in tags]
-            self._session.add(document)
-            if fingerprint:
-                documents_by_fingerprint[fingerprint] = document
-            if doi:
-                documents_by_doi[doi] = document
-            self.counters["inserted"] += 1
-        self._session.flush()
-        self.pending.clear()
+        author_name = document_data.pop("author_name")
+        organization_name = document_data.pop("organization_name")
+        tags = document_data.pop("tags")
+        author = (
+            self._get_or_create(Author, author_name, self.author_cache) if author_name else None
+        )
+        organization = (
+            self._get_or_create(Organization, organization_name, self.organization_cache)
+            if organization_name
+            else None
+        )
+        document = Document(
+            **document_data,
+            content_fingerprint=prepared.fingerprint,
+            author=author,
+            organization=organization,
+        )
+        document.tags = [self._get_or_create(Tag, tag, self.tag_cache) for tag in tags]
+        self._session.add(document)
+        if prepared.fingerprint:
+            documents_by_fingerprint[prepared.fingerprint] = document
+        if prepared.doi:
+            documents_by_doi[prepared.doi] = document
+        self.counters["inserted"] += 1
+
+    def _record_duplicate(
+        self,
+        record: PendingRecord,
+        prepared: PreparedRecord,
+        duplicate: Document,
+        duplicate_by_doi: Document | None,
+        duplicate_by_content: Document | None,
+        external_id: str | None,
+    ) -> None:
+        if duplicate.id is None:
+            self._session.flush()
+        if (
+            duplicate_by_doi
+            and prepared.fingerprint
+            and duplicate.content_fingerprint != prepared.fingerprint
+        ):
+            reason = "duplicate_conflicting_content"
+        elif (
+            duplicate_by_content
+            and prepared.doi
+            and duplicate.doi
+            and duplicate.doi != prepared.doi
+        ):
+            reason = "duplicate_conflicting_doi"
+        else:
+            reason = "duplicate_document"
+        self._add_issue(
+            record.source_file,
+            record.source_line,
+            Issue("document", reason, str(duplicate.id)),
+            external_id,
+        )
+        self.counters["already_imported"] += 1
 
     def _get_or_create(self, model: type[Any], name: str, cache: dict[str, Any]) -> Any:
         if name in cache:
