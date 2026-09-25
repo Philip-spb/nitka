@@ -1,0 +1,14 @@
+# Python-generated files
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
+input_docs/*
+!input_docs/.gitkeep
+reports/
+analyze_jsonl.py
+
+# Virtual environments
+.venv
