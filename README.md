@@ -78,16 +78,36 @@ skipped. A valid document always has a non-empty `title`.
 - A URL must be a credential-free HTTP(S) URL with a hostname. DOI must match
   `10.<digits>/...`. There are no network lookups.
 
-`external_id` is optional and intentionally not unique. A valid DOI is unique
-after normalization. The internal `content_fingerprint` is a deduplication
-fingerprint with two deterministic forms: when a record has `title` and `body`,
-it is SHA-256 of their Unicode-normalized, whitespace-collapsed, case-folded
-values; otherwise, when DOI is absent, it is SHA-256 of the complete normalized
-record. The latter prevents an exact normalized record from being inserted on a
-repeat import without claiming that title alone identifies a document.
-PostgreSQL enforces uniqueness of both DOI and the fingerprint. A duplicate or
-conflicting DOI/content combination is skipped with an `ingestion_issues`
-warning.
+### Document uniqueness and duplicates
+
+`external_id` is optional and deliberately **not** a uniqueness key: the source
+may assign the same value to distinct documents. During import, a record is
+considered a duplicate when the first applicable rule below finds a matching
+stored document:
+
+1. A normalized DOI matches. This rule applies only when the incoming document
+   has a valid DOI.
+2. A `content_fingerprint` matches when the incoming document has a non-empty
+   body. The fingerprint is SHA-256 of the title and body after Unicode NFKC
+   normalization, whitespace collapsing, and case folding. Thus differences in
+   case, repeated whitespace, or equivalent Unicode representations do not
+   create a second document.
+3. If both DOI and body are absent, a `record_fingerprint` matches. It is
+   SHA-256 of the complete normalized input record. This prevents exact
+   normalized repeat imports, but does not treat a title on its own as unique.
+
+Both kinds of fingerprint are stored in the `documents.content_fingerprint`
+column; `title_body_fingerprint` and `record_fingerprint` name the two
+calculation variants. PostgreSQL enforces unique normalized DOI and unique
+non-null `content_fingerprint` values.
+
+On a match the incoming record is **not updated or merged** into the stored
+document. It is skipped, and `ingestion_issues` records the matching rule and
+the existing document ID. Duplicate records do not produce a per-record log
+event; their total is available as `already_imported` in the import summary.
+This is intentional: without a defined field-level merge policy, silently
+filling missing data could overwrite or combine contradictory source values.
+Enrichment of existing documents is outside the current ingestion scope.
 
 One transaction-scoped PostgreSQL advisory lock prevents concurrent imports. A
 second API request receives `409 Conflict`. A fatal failure rolls back the
@@ -192,14 +212,6 @@ The following output is from a complete run against the hand-authored
 {"event":"record_warning","file":"sample.jsonl","line":5,"field":"title","reason":"missing_required_title"}
 {"event":"scoring_completed","quality_tiers":{"low":2,"medium":1,"high":2}}
 {"event":"ingestion_completed","run_id":1,"processed":9,"inserted":5,"already_imported":0,"skipped":4,"warnings":18,"final_counts":{"documents":5,"authors":2,"organizations":1,"tags":3}}
-```
-
-When a normalized record is not inserted because it matches an existing
-document, the log additionally identifies both records without exposing the
-body:
-
-```text
-{"event":"document_not_inserted","file":"second.jsonl","line":1,"external_id":"doc-12","title":"Climate Policy","reason":"duplicate_document","deduplication_rule":"title_body_fingerprint","existing_document_id":42}
 ```
 
 The verified fixture `/stats` response was:

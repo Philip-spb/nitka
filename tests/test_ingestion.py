@@ -74,7 +74,7 @@ def test_invalid_document_emits_a_not_inserted_event(db_engine, tmp_path, caplog
     }
 
 
-def test_same_normalized_title_and_body_in_two_files_is_a_duplicate(db_engine, tmp_path, caplog):
+def test_same_normalized_title_and_body_in_two_files_is_a_duplicate(db_engine, tmp_path):
     first_path = tmp_path / "first.jsonl"
     second_path = tmp_path / "second.jsonl"
     first_path.write_text(
@@ -88,9 +88,7 @@ def test_same_normalized_title_and_body_in_two_files_is_a_duplicate(db_engine, t
         encoding="utf-8",
     )
 
-    caplog.set_level(logging.INFO, logger="nitka.eventlog")
     first = ingest(db_engine, first_path)
-    caplog.clear()
     second = ingest(db_engine, second_path)
 
     assert first["inserted"] == 1
@@ -101,22 +99,9 @@ def test_same_normalized_title_and_body_in_two_files_is_a_duplicate(db_engine, t
         assert session.scalar(select(func.count(Document.id))) == 1
         assert session.scalar(select(IngestionIssue.reason)) == "duplicate_document"
         assert session.scalar(select(IngestionIssue.value_preview)) == "1"
-    events = [json.loads(record.message) for record in caplog.records]
-    duplicate_event = next(event for event in events if event["event"] == "document_not_inserted")
-    assert duplicate_event == {
-        "timestamp": duplicate_event["timestamp"],
-        "event": "document_not_inserted",
-        "file": "second.jsonl",
-        "line": 1,
-        "external_id": None,
-        "title": "climate policy",
-        "reason": "duplicate_document",
-        "deduplication_rule": "title_body_fingerprint",
-        "existing_document_id": 1,
-    }
 
 
-def test_duplicate_content_enriches_the_stored_document_with_a_doi(db_engine, tmp_path):
+def test_duplicate_content_does_not_enrich_the_stored_document_with_a_doi(db_engine, tmp_path):
     first_path = tmp_path / "without-doi.jsonl"
     second_path = tmp_path / "with-doi.jsonl"
     first_path.write_text('{"title":"Document", "body":"Full text"}\n', encoding="utf-8")
@@ -130,7 +115,7 @@ def test_duplicate_content_enriches_the_stored_document_with_a_doi(db_engine, tm
 
     assert summary["inserted"] == 0
     with Session(db_engine) as session:
-        assert session.scalar(select(Document.doi)) == "10.1234/example"
+        assert session.scalar(select(Document.doi)) is None
 
 
 def test_same_bodyless_normalized_record_in_two_files_is_a_duplicate(db_engine, tmp_path):

@@ -198,22 +198,12 @@ def _process_batch(
         if duplicate is not None:
             if duplicate.id is None:
                 session.flush()
-            deduplication_rule = (
-                "doi"
-                if duplicate_by_doi is not None
-                else "title_body_fingerprint"
-                if document_data["body"] is not None
-                else "record_fingerprint"
-            )
             if duplicate_by_doi and fingerprint and duplicate.content_fingerprint != fingerprint:
                 reason = "duplicate_conflicting_content"
             elif duplicate_by_content and doi and duplicate.doi and duplicate.doi != doi:
                 reason = "duplicate_conflicting_doi"
             else:
                 reason = "duplicate_document"
-                if doi and duplicate.doi is None:
-                    duplicate.doi = doi
-                    documents_by_doi[doi] = duplicate
             duplicate_issue = Issue("document", reason, str(duplicate.id))
             session.add(
                 _make_issue(
@@ -226,23 +216,6 @@ def _process_batch(
             )
             counters["already_imported"] += 1
             counters["warnings"] += 1
-            emit(
-                "document_not_inserted",
-                file=record.source_file,
-                line=record.source_line,
-                external_id=external_id,
-                title=document_data["title"],
-                reason=reason,
-                deduplication_rule=deduplication_rule,
-                existing_document_id=duplicate.id,
-            )
-            emit(
-                "record_warning",
-                file=record.source_file,
-                line=record.source_line,
-                field=duplicate_issue.field,
-                reason=duplicate_issue.reason,
-            )
             continue
 
         author_name = document_data.pop("author_name")
