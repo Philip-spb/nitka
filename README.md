@@ -103,6 +103,17 @@ skipped. A valid document always has a non-empty `title`.
 - A URL must be a credential-free HTTP(S) URL with a hostname. DOI must match
   `10.<digits>/...`. There are no network lookups.
 
+## Additional processing
+
+The service implements two additional processing steps:
+
+- **Duplicate detection:** documents are skipped when a normalized DOI,
+  title/body fingerprint, or fallback record fingerprint already exists. The
+  result is stored as an ingestion issue and included in `already_imported`.
+- **Completeness scoring:** each imported document receives a persisted
+  `completeness_score` and `quality_tier`. Both values are returned by the
+  document endpoints and aggregated by `/stats`.
+
 ### Document uniqueness and duplicates
 
 `external_id` is optional and deliberately **not** a uniqueness key: the source
@@ -254,19 +265,90 @@ The following output is from a complete run against the hand-authored
 {"event":"ingestion_completed","run_id":1,"processed":9,"inserted":5,"already_imported":0,"skipped":4,"warnings":18}
 ```
 
-The verified fixture `/stats` response was:
+An [extended captured log excerpt from a completed import of a supplied source
+file](examples/ingestion-run-7.log) contains 505 real event lines, including
+source-line warnings, skipped documents, scoring, and final counters. It starts
+after the `ingestion_started` event; the compact fixture log above remains the
+self-contained start-to-finish example.
+
+After importing the supplied dataset, the `/stats` response was:
 
 ```json
 {
-  "documents": 5,
-  "authors": 2,
-  "organizations": 1,
-  "tags": 3,
-  "average_completeness_score": 58.0,
-  "quality_tiers": {"low": 2, "medium": 1, "high": 2},
-  "statuses": {"unknown": 2, "draft": 1, "published": 1, "archived": 1},
-  "organizations_by_document": {"Example Institute": 1},
-  "tags_by_document": {"policy": 2, "water": 1, "energy": 2}
+  "documents": 1828,
+  "authors": 51,
+  "organizations": 26,
+  "tags": 37,
+  "average_completeness_score": 79.60339168490154,
+  "quality_tiers": {"low": 10, "medium": 1021, "high": 797},
+  "statuses": {"published": 406, "unknown": 909, "archived": 188, "draft": 325},
+  "organizations_by_document": {
+    "Rocky Mountain Institute": 61,
+    "Third Generation Environmentalism": 62,
+    "Climate Policy Initiative": 59,
+    "World Resources Institute": 59,
+    "Potsdam Institute for Climate Impact Research": 54,
+    "IRENA": 55,
+    "Carbon Tracker Initiative": 58,
+    "EU Climate Institute": 62,
+    "CPI": 60,
+    "EU Climate Inst.": 60,
+    "Carbon Tracker": 64,
+    "T&E": 61,
+    "European Climate Institute": 69,
+    "Ember": 68,
+    "Ember Climate": 57,
+    "E3G": 60,
+    "Transport & Environment": 59,
+    "PIK": 54,
+    "Global Energy Organization": 58,
+    "Global Energy Org": 57,
+    "Stockholm Environment Institute": 60,
+    "RMI": 59,
+    "Energy Organization Intl": 54,
+    "WRI": 61,
+    "SEI": 60,
+    "International Renewable Energy Agency": 54
+  },
+  "tags_by_document": {
+    "land-management": 54,
+    "ev": 53,
+    "policy": 227,
+    "fossil-fuels": 53,
+    "groundwater": 81,
+    "decarbonisation": 53,
+    "oceans": 64,
+    "transport": 53,
+    "energy; renewables": 52,
+    "fuel-cells": 49,
+    "acidification": 64,
+    "marine": 73,
+    "carbon-capture": 62,
+    "urban": 163,
+    "green-bonds": 47,
+    "plastics": 73,
+    "agriculture": 51,
+    "livestock": 61,
+    "resources": 51,
+    "biodiversity": 65,
+    "water": 220,
+    "europe": 72,
+    "finance": 47,
+    "hydrogen": 49,
+    "wildfire": 54,
+    "nuclear": 52,
+    "food-security": 51,
+    "renewables": 68,
+    "infrastructure": 61,
+    "methane": 61,
+    "low-carbon": 52,
+    "ecosystems": 65,
+    "climate": 268,
+    "ccs": 62,
+    "energy": 228,
+    "heat": 58,
+    "planning": 58
+  }
 }
 ```
 
