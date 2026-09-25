@@ -6,6 +6,7 @@ Create Date: 2026-09-25
 """
 
 import sqlalchemy as sa
+from sqlalchemy.dialects import postgresql
 
 from alembic import op
 
@@ -14,8 +15,13 @@ down_revision = None
 branch_labels = None
 depends_on = None
 
+_ingestion_run_status = postgresql.ENUM(
+    "running", "completed", "failed", name="ingestion_run_status", create_type=False
+)
+
 
 def upgrade() -> None:
+    _ingestion_run_status.create(op.get_bind(), checkfirst=True)
     op.create_table(
         "authors",
         sa.Column("id", sa.Integer(), primary_key=True),
@@ -34,7 +40,7 @@ def upgrade() -> None:
     op.create_table(
         "ingestion_runs",
         sa.Column("id", sa.Integer(), primary_key=True),
-        sa.Column("status", sa.String(length=20), nullable=False),
+        sa.Column("status", _ingestion_run_status, nullable=False),
         sa.Column("started_at", sa.DateTime(timezone=True), server_default=sa.text("now()")),
         sa.Column("ended_at", sa.DateTime(timezone=True)),
         sa.Column("processed", sa.Integer(), nullable=False, server_default="0"),
@@ -132,6 +138,7 @@ def downgrade() -> None:
     op.drop_index("documents_published_at_idx", table_name="documents")
     op.drop_table("documents")
     op.drop_table("ingestion_runs")
+    _ingestion_run_status.drop(op.get_bind(), checkfirst=True)
     op.drop_table("tags")
     op.drop_table("organizations")
     op.drop_table("authors")

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+from enum import StrEnum
 
 from sqlalchemy import (
     CheckConstraint,
@@ -17,6 +18,9 @@ from sqlalchemy import (
     Text,
     UniqueConstraint,
     func,
+)
+from sqlalchemy import (
+    Enum as SqlEnum,
 )
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
@@ -54,11 +58,24 @@ class Tag(Base):
     name: Mapped[str] = mapped_column(String(255), unique=True)
 
 
+class IngestionStatus(StrEnum):
+    RUNNING = "running"
+    COMPLETED = "completed"
+    FAILED = "failed"
+
+
 class IngestionRun(Base):
     __tablename__ = "ingestion_runs"
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    status: Mapped[str] = mapped_column(String(20), nullable=False)
+    status: Mapped[IngestionStatus] = mapped_column(
+        SqlEnum(
+            IngestionStatus,
+            name="ingestion_run_status",
+            values_callable=lambda status: [item.value for item in status],
+        ),
+        nullable=False,
+    )
     started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     ended_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     processed: Mapped[int] = mapped_column(Integer, default=0, nullable=False)

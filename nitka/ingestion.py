@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-from collections import Counter
 from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -14,7 +13,15 @@ from sqlalchemy import Engine, or_, select, text
 from sqlalchemy.orm import Session
 
 from nitka.eventlog import emit
-from nitka.models import Author, Document, IngestionIssue, IngestionRun, Organization, Tag
+from nitka.models import (
+    Author,
+    Document,
+    IngestionIssue,
+    IngestionRun,
+    IngestionStatus,
+    Organization,
+    Tag,
+)
 from nitka.normalization import (
     Issue,
     NormalizationResult,
@@ -45,6 +52,15 @@ class PreparedRecord:
     result: NormalizationResult
     fingerprint: str | None
     doi: str | None
+
+
+@dataclass
+class IngestionCounters:
+    processed: int = 0
+    inserted: int = 0
+    already_imported: int = 0
+    skipped: int = 0
+    warnings: int = 0
 
 
 def _input_file(path: Path) -> Path:
@@ -113,7 +129,7 @@ class Ingestor:
     def __init__(self, engine: Engine, input_path: Path) -> None:
         self.engine = engine
         self.input_file = _input_file(input_path)
-        self.counters: Counter[str] = Counter()
+        self.counters = IngestionCounters()
         self.author_cache: dict[str, Author] = {}
         self.organization_cache: dict[str, Organization] = {}
         self.tag_cache: dict[str, Tag] = {}
@@ -152,15 +168,15 @@ class Ingestor:
             raise IngestionBusyError("another ingestion is already running")
 
     def _start_run(self) -> None:
-        self.run_record = IngestionRun(status="running")
+        self.run_record = IngestionRun(status=IngestionStatus.RUNNING)
         self._session.add(self.run_record)
         self._session.flush()
 
     def _process_line(self, source_file: str, line_number: int, raw_line: bytes) -> None:
-        self.counters["processed"] += 1
+        self.counters.processed += 1
         if not raw_line.strip():
             self._add_issue(source_file, line_number, Issue("record", "blank_line", "<blank line>"))
-            self.counters["skipped"] += 1
+            self.counters.skipped += 1
             emit("record_skipped", file=source_file, line=line_number, reason="blank_line")
             return
         try:
@@ -168,7 +184,7 @@ class Ingestor:
         except (UnicodeDecodeError, ValueError, json.JSONDecodeError) as error:
             issue = Issue("record", "invalid_json", f"<{type(error).__name__}: {str(error)[:160]}>")
             self._add_issue(source_file, line_number, issue)
-            self.counters["skipped"] += 1
+            self.counters.skipped += 1
             emit("record_skipped", file=source_file, line=line_number, reason=issue.reason)
             return
 
@@ -252,7 +268,7 @@ class Ingestor:
                 reason=issue.reason,
             )
         if result.document is None:
-            self.counters["skipped"] += 1
+            self.counters.skipped += 1
             reason = result.issues[0].reason if result.issues else "invalid_document"
             emit(
                 "document_not_inserted",
@@ -304,7 +320,7 @@ class Ingestor:
             documents_by_fingerprint[prepared.fingerprint] = document
         if prepared.doi:
             documents_by_doi[prepared.doi] = document
-        self.counters["inserted"] += 1
+        self.counters.inserted += 1
 
     def _record_duplicate(
         self,
@@ -338,7 +354,7 @@ class Ingestor:
             Issue("document", reason, str(duplicate.id)),
             external_id,
         )
-        self.counters["already_imported"] += 1
+        self.counters.already_imported += 1
 
     def _get_or_create(self, model: type[Any], name: str, cache: dict[str, Any]) -> Any:
         if name in cache:
@@ -358,16 +374,16 @@ class Ingestor:
         external_id: str | None = None,
     ) -> None:
         self._session.add(_make_issue(self._run.id, source_file, source_line, issue, external_id))
-        self.counters["warnings"] += 1
+        self.counters.warnings += 1
 
     def _complete(self) -> dict[str, Any]:
-        self._run.status = "completed"
+        self._run.status = IngestionStatus.COMPLETED
         self._run.ended_at = datetime.now(UTC)
-        self._run.processed = self.counters["processed"]
-        self._run.inserted = self.counters["inserted"]
-        self._run.already_imported = self.counters["already_imported"]
-        self._run.skipped = self.counters["skipped"]
-        self._run.warnings = self.counters["warnings"]
+        self._run.processed = self.counters.processed
+        self._run.inserted = self.counters.inserted
+        self._run.already_imported = self.counters.already_imported
+        self._run.skipped = self.counters.skipped
+        self._run.warnings = self.counters.warnings
         self._session.flush()
         return {
             "run_id": self._run.id,
@@ -384,13 +400,13 @@ class Ingestor:
         try:
             with Session(self.engine) as failure_session, failure_session.begin():
                 failed_run = IngestionRun(
-                    status="failed",
+                    status=IngestionStatus.FAILED,
                     ended_at=datetime.now(UTC),
-                    processed=self.counters["processed"],
+                    processed=self.counters.processed,
                     inserted=0,
-                    already_imported=self.counters["already_imported"],
-                    skipped=self.counters["skipped"],
-                    warnings=self.counters["warnings"],
+                    already_imported=self.counters.already_imported,
+                    skipped=self.counters.skipped,
+                    warnings=self.counters.warnings,
                     failure_reason=failure_reason,
                 )
                 failure_session.add(failed_run)
