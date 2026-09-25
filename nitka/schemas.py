@@ -46,7 +46,7 @@ class DocumentPage(BaseModel):
     page_size: int
 
 
-class IngestionSummary(BaseModel):
+class IngestionResponse(BaseModel):
     run_id: int
     status: str
     processed: int
@@ -54,7 +54,6 @@ class IngestionSummary(BaseModel):
     already_imported: int
     skipped: int
     warnings: int
-    final_counts: dict[str, int]
 
 
 class Stats(BaseModel):

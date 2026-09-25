@@ -33,7 +33,7 @@ def test_post_ingestions_runs_synchronously_and_returns_summary(client):
 
     assert payload["status"] == "completed"
     assert payload["inserted"] == 5
-    assert payload["final_counts"]["documents"] == 5
+    assert "final_counts" not in payload
 
 
 def test_post_ingestions_rejects_a_file_with_an_unsupported_extension(client):

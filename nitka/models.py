@@ -67,10 +67,6 @@ class IngestionRun(Base):
     skipped: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     warnings: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     failure_reason: Mapped[str | None] = mapped_column(Text)
-    final_document_count: Mapped[int | None] = mapped_column(Integer)
-    final_author_count: Mapped[int | None] = mapped_column(Integer)
-    final_organization_count: Mapped[int | None] = mapped_column(Integer)
-    final_tag_count: Mapped[int | None] = mapped_column(Integer)
 
 
 class Document(Base):

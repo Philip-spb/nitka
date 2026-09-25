@@ -25,9 +25,9 @@ def test_imports_normalized_documents_and_records_all_outcomes(db_engine):
     assert summary["inserted"] == 5
     assert summary["skipped"] == 4
     assert summary["warnings"] > 0
-    assert summary["final_counts"] == {"documents": 5, "authors": 2, "organizations": 1, "tags": 3}
 
     with Session(db_engine) as session:
+        assert session.scalar(select(func.count(Document.id))) == 5
         document = (
             session.execute(
                 select(Document).where(Document.external_id == "shared-id").order_by(Document.id)
@@ -50,7 +50,8 @@ def test_repeat_import_does_not_add_any_document(db_engine):
 
     assert second["inserted"] == 0
     assert second["already_imported"] == first["inserted"]
-    assert second["final_counts"] == first["final_counts"]
+    with Session(db_engine) as session:
+        assert session.scalar(select(func.count(Document.id))) == first["inserted"]
 
 
 def test_invalid_document_emits_a_not_inserted_event(db_engine, tmp_path, caplog):
@@ -189,7 +190,8 @@ def test_changed_document_content_is_stored_as_a_new_document(db_engine, tmp_pat
 
     assert first["inserted"] == 1
     assert second["inserted"] == 1
-    assert second["final_counts"]["documents"] == 2
+    with Session(db_engine) as session:
+        assert session.scalar(select(func.count(Document.id))) == 2
 
 
 def test_fatal_import_failure_rolls_back_documents_and_records_failed_run(

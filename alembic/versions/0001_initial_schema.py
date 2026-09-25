@@ -43,10 +43,6 @@ def upgrade() -> None:
         sa.Column("skipped", sa.Integer(), nullable=False, server_default="0"),
         sa.Column("warnings", sa.Integer(), nullable=False, server_default="0"),
         sa.Column("failure_reason", sa.Text()),
-        sa.Column("final_document_count", sa.Integer()),
-        sa.Column("final_author_count", sa.Integer()),
-        sa.Column("final_organization_count", sa.Integer()),
-        sa.Column("final_tag_count", sa.Integer()),
     )
     op.create_table(
         "documents",

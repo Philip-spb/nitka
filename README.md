@@ -142,7 +142,7 @@ completeness, not relevance or editorial quality. The inconsistent source
 | `organizations` | Unique trimmed organization names |
 | `tags` | Unique normalized tag names |
 | `document_tags` | Document-to-tag many-to-many relationship |
-| `ingestion_runs` | Lifecycle, counters, final entity counts and failure status |
+| `ingestion_runs` | Lifecycle, record counters and failure status |
 | `ingestion_issues` | File/line-level skipped-record and field warning evidence |
 
 The initial schema is versioned in
@@ -172,8 +172,7 @@ and returns a `200` summary such as:
   "inserted": 5,
   "already_imported": 0,
   "skipped": 4,
-  "warnings": 18,
-  "final_counts": {"documents": 5, "authors": 2, "organizations": 1, "tags": 3}
+  "warnings": 18
 }
 ```
 
@@ -210,8 +209,8 @@ The following output is from a complete run against the hand-authored
 {"event":"record_skipped","file":"sample.jsonl","line":6,"reason":"invalid_json"}
 {"event":"record_warning","file":"sample.jsonl","line":2,"field":"citation_count","reason":"invalid_nonnegative_integer"}
 {"event":"record_warning","file":"sample.jsonl","line":5,"field":"title","reason":"missing_required_title"}
-{"event":"scoring_completed","quality_tiers":{"low":2,"medium":1,"high":2}}
-{"event":"ingestion_completed","run_id":1,"processed":9,"inserted":5,"already_imported":0,"skipped":4,"warnings":18,"final_counts":{"documents":5,"authors":2,"organizations":1,"tags":3}}
+{"event":"scoring_completed","run_id":1,"scored_documents":5}
+{"event":"ingestion_completed","run_id":1,"processed":9,"inserted":5,"already_imported":0,"skipped":4,"warnings":18}
 ```
 
 The verified fixture `/stats` response was:

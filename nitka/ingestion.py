@@ -10,7 +10,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from sqlalchemy import Engine, func, or_, select, text
+from sqlalchemy import Engine, or_, select, text
 from sqlalchemy.orm import Session
 
 from nitka.eventlog import emit
@@ -68,35 +68,6 @@ def _make_issue(
     )
 
 
-def _get_or_create(session: Session, model: type[Any], name: str, cache: dict[str, Any]) -> Any:
-    if name in cache:
-        return cache[name]
-    entity = session.scalar(select(model).where(model.name == name))
-    if entity is None:
-        entity = model(name=name)
-        session.add(entity)
-    cache[name] = entity
-    return entity
-
-
-def _counts(session: Session) -> dict[str, int]:
-    return {
-        "documents": session.scalar(select(func.count(Document.id))) or 0,
-        "authors": session.scalar(select(func.count(Author.id))) or 0,
-        "organizations": session.scalar(select(func.count(Organization.id))) or 0,
-        "tags": session.scalar(select(func.count(Tag.id))) or 0,
-    }
-
-
-def _tier_counts(session: Session) -> dict[str, int]:
-    counts = {"low": 0, "medium": 0, "high": 0}
-    for tier, count in session.execute(
-        select(Document.quality_tier, func.count(Document.id)).group_by(Document.quality_tier)
-    ):
-        counts[tier] = count
-    return counts
-
-
 def _iter_lines(input_file: Path) -> Iterable[tuple[str, int, bytes]]:
     with input_file.open("rb") as source:
         for line_number, raw_line in enumerate(source, start=1):
@@ -117,241 +88,250 @@ def _external_id_for_log(value: Any) -> str | None:
     return None
 
 
-def _process_batch(
-    session: Session,
-    *,
-    pending: list[PendingRecord],
-    run_id: int,
-    counters: Counter[str],
-    author_cache: dict[str, Author],
-    organization_cache: dict[str, Organization],
-    tag_cache: dict[str, Tag],
-) -> None:
-    if not pending:
-        return
-    normalized_records = [(record, normalize_record(record.value)) for record in pending]
-    fingerprints: set[str] = set()
-    for _, result in normalized_records:
-        if result.document is not None:
-            fingerprint = _deduplication_fingerprint(result.document)
-            if fingerprint is not None:
-                fingerprints.add(fingerprint)
-    dois = {
-        result.document["doi"]
-        for _, result in normalized_records
-        if result.document is not None and result.document["doi"] is not None
-    }
-    predicates = []
-    if fingerprints:
-        predicates.append(Document.content_fingerprint.in_(fingerprints))
-    if dois:
-        predicates.append(Document.doi.in_(dois))
-    existing_documents = (
-        session.scalars(select(Document).where(or_(*predicates))).all() if predicates else []
-    )
-    documents_by_fingerprint = {
-        document.content_fingerprint: document
-        for document in existing_documents
-        if document.content_fingerprint is not None
-    }
-    documents_by_doi = {
-        document.doi: document for document in existing_documents if document.doi is not None
-    }
-
-    for record, result in normalized_records:
-        external_id = (
-            result.document["external_id"]
-            if result.document is not None
-            else _external_id_for_log(record.value)
-        )
-        for issue in result.issues:
-            session.add(
-                _make_issue(run_id, record.source_file, record.source_line, issue, external_id)
-            )
-            counters["warnings"] += 1
-            emit(
-                "record_warning",
-                file=record.source_file,
-                line=record.source_line,
-                field=issue.field,
-                reason=issue.reason,
-            )
-        if result.document is None:
-            counters["skipped"] += 1
-            reason = result.issues[0].reason if result.issues else "invalid_document"
-            emit(
-                "document_not_inserted",
-                file=record.source_file,
-                line=record.source_line,
-                external_id=external_id,
-                title=None,
-                reason=reason,
-            )
-            continue
-
-        document_data = result.document
-        fingerprint = _deduplication_fingerprint(document_data)
-        doi = document_data["doi"]
-        duplicate_by_doi = documents_by_doi.get(doi) if doi else None
-        duplicate_by_content = documents_by_fingerprint.get(fingerprint) if fingerprint else None
-        duplicate = duplicate_by_doi or duplicate_by_content
-        if duplicate is not None:
-            if duplicate.id is None:
-                session.flush()
-            if duplicate_by_doi and fingerprint and duplicate.content_fingerprint != fingerprint:
-                reason = "duplicate_conflicting_content"
-            elif duplicate_by_content and doi and duplicate.doi and duplicate.doi != doi:
-                reason = "duplicate_conflicting_doi"
-            else:
-                reason = "duplicate_document"
-            duplicate_issue = Issue("document", reason, str(duplicate.id))
-            session.add(
-                _make_issue(
-                    run_id,
-                    record.source_file,
-                    record.source_line,
-                    duplicate_issue,
-                    external_id,
-                )
-            )
-            counters["already_imported"] += 1
-            counters["warnings"] += 1
-            continue
-
-        author_name = document_data.pop("author_name")
-        organization_name = document_data.pop("organization_name")
-        tags = document_data.pop("tags")
-        author = _get_or_create(session, Author, author_name, author_cache) if author_name else None
-        organization = (
-            _get_or_create(session, Organization, organization_name, organization_cache)
-            if organization_name
-            else None
-        )
-        document = Document(
-            **document_data,
-            content_fingerprint=fingerprint,
-            author=author,
-            organization=organization,
-        )
-        document.tags = [_get_or_create(session, Tag, tag, tag_cache) for tag in tags]
-        session.add(document)
-        if fingerprint:
-            documents_by_fingerprint[fingerprint] = document
-        if doi:
-            documents_by_doi[doi] = document
-        counters["inserted"] += 1
-    session.flush()
-    pending.clear()
-
-
 def ingest(engine: Engine, input_path: Path) -> dict[str, Any]:
     """Import one JSONL/NDJSON file in one PostgreSQL transaction."""
-    input_file = _input_file(input_path)
-    counters: Counter[str] = Counter()
-    author_cache: dict[str, Author] = {}
-    organization_cache: dict[str, Organization] = {}
-    tag_cache: dict[str, Tag] = {}
-    emit("ingestion_started", input_file=str(input_file))
+    return Ingestor(engine, input_path).run()
 
-    try:
-        with Session(engine) as session, session.begin():
-            locked = session.scalar(
-                text("SELECT pg_try_advisory_xact_lock(:key)"), {"key": _IMPORT_LOCK}
+
+class Ingestor:
+    """Stateful implementation of one atomic document import."""
+
+    def __init__(self, engine: Engine, input_path: Path) -> None:
+        self.engine = engine
+        self.input_file = _input_file(input_path)
+        self.counters: Counter[str] = Counter()
+        self.author_cache: dict[str, Author] = {}
+        self.organization_cache: dict[str, Organization] = {}
+        self.tag_cache: dict[str, Tag] = {}
+        self.pending: list[PendingRecord] = []
+        self.session: Session | None = None
+        self.run_record: IngestionRun | None = None
+
+    def run(self) -> dict[str, Any]:
+        emit("ingestion_started", input_file=str(self.input_file))
+        try:
+            with Session(self.engine) as session, session.begin():
+                self.session = session
+                self._acquire_lock()
+                self._start_run()
+                for source_file, line_number, raw_line in _iter_lines(self.input_file):
+                    self._process_line(source_file, line_number, raw_line)
+                self._process_pending()
+                summary = self._complete()
+        except IngestionBusyError:
+            raise
+        except Exception as error:
+            self._record_failure(error)
+            raise RuntimeError("ingestion failed") from error
+        finally:
+            self.session = None
+
+        emit("scoring_completed", run_id=summary["run_id"], scored_documents=summary["inserted"])
+        emit("ingestion_completed", **summary)
+        return summary
+
+    def _acquire_lock(self) -> None:
+        locked = self._session.scalar(
+            text("SELECT pg_try_advisory_xact_lock(:key)"), {"key": _IMPORT_LOCK}
+        )
+        if not locked:
+            raise IngestionBusyError("another ingestion is already running")
+
+    def _start_run(self) -> None:
+        self.run_record = IngestionRun(status="running")
+        self._session.add(self.run_record)
+        self._session.flush()
+
+    def _process_line(self, source_file: str, line_number: int, raw_line: bytes) -> None:
+        self.counters["processed"] += 1
+        if not raw_line.strip():
+            self._add_issue(source_file, line_number, Issue("record", "blank_line", "<blank line>"))
+            self.counters["skipped"] += 1
+            emit("record_skipped", file=source_file, line=line_number, reason="blank_line")
+            return
+        try:
+            source_value = _json_loads(raw_line.decode("utf-8"))
+        except (UnicodeDecodeError, ValueError, json.JSONDecodeError) as error:
+            issue = Issue("record", "invalid_json", f"<{type(error).__name__}: {str(error)[:160]}>")
+            self._add_issue(source_file, line_number, issue)
+            self.counters["skipped"] += 1
+            emit("record_skipped", file=source_file, line=line_number, reason=issue.reason)
+            return
+
+        self.pending.append(PendingRecord(source_file, line_number, source_value))
+        if len(self.pending) == _BATCH_SIZE:
+            self._process_pending()
+
+    def _process_pending(self) -> None:
+        if not self.pending:
+            return
+        normalized_records = [(record, normalize_record(record.value)) for record in self.pending]
+        fingerprints = {
+            fingerprint
+            for _, result in normalized_records
+            if result.document is not None
+            if (fingerprint := _deduplication_fingerprint(result.document)) is not None
+        }
+        dois = {
+            result.document["doi"]
+            for _, result in normalized_records
+            if result.document is not None and result.document["doi"] is not None
+        }
+        predicates = []
+        if fingerprints:
+            predicates.append(Document.content_fingerprint.in_(fingerprints))
+        if dois:
+            predicates.append(Document.doi.in_(dois))
+        existing_documents = (
+            self._session.scalars(select(Document).where(or_(*predicates))).all()
+            if predicates
+            else []
+        )
+        documents_by_fingerprint = {
+            document.content_fingerprint: document
+            for document in existing_documents
+            if document.content_fingerprint is not None
+        }
+        documents_by_doi = {
+            document.doi: document for document in existing_documents if document.doi is not None
+        }
+
+        for record, result in normalized_records:
+            external_id = (
+                result.document["external_id"]
+                if result.document is not None
+                else _external_id_for_log(record.value)
             )
-            if not locked:
-                raise IngestionBusyError("another ingestion is already running")
-            run = IngestionRun(status="running")
-            session.add(run)
-            session.flush()
-            pending: list[PendingRecord] = []
-
-            for source_file, line_number, raw_line in _iter_lines(input_file):
-                counters["processed"] += 1
-                if not raw_line.strip():
-                    counters["skipped"] += 1
-                    issue = Issue("record", "blank_line", "<blank line>")
-                    session.add(_make_issue(run.id, source_file, line_number, issue))
-                    counters["warnings"] += 1
-                    emit("record_skipped", file=source_file, line=line_number, reason=issue.reason)
-                    continue
-                try:
-                    decoded = raw_line.decode("utf-8")
-                    source_value = _json_loads(decoded)
-                except (UnicodeDecodeError, ValueError, json.JSONDecodeError) as error:
-                    counters["skipped"] += 1
-                    issue = Issue(
-                        "record", "invalid_json", f"<{type(error).__name__}: {str(error)[:160]}>"
-                    )
-                    session.add(_make_issue(run.id, source_file, line_number, issue))
-                    counters["warnings"] += 1
-                    emit("record_skipped", file=source_file, line=line_number, reason=issue.reason)
-                    continue
-
-                pending.append(
-                    PendingRecord(
-                        source_file=source_file,
-                        source_line=line_number,
-                        value=source_value,
-                    )
+            for issue in result.issues:
+                self._add_issue(record.source_file, record.source_line, issue, external_id)
+                emit(
+                    "record_warning",
+                    file=record.source_file,
+                    line=record.source_line,
+                    field=issue.field,
+                    reason=issue.reason,
                 )
-                if len(pending) == _BATCH_SIZE:
-                    _process_batch(
-                        session,
-                        pending=pending,
-                        run_id=run.id,
-                        counters=counters,
-                        author_cache=author_cache,
-                        organization_cache=organization_cache,
-                        tag_cache=tag_cache,
-                    )
+            if result.document is None:
+                self.counters["skipped"] += 1
+                reason = result.issues[0].reason if result.issues else "invalid_document"
+                emit(
+                    "document_not_inserted",
+                    file=record.source_file,
+                    line=record.source_line,
+                    external_id=external_id,
+                    title=None,
+                    reason=reason,
+                )
+                continue
 
-            _process_batch(
-                session,
-                pending=pending,
-                run_id=run.id,
-                counters=counters,
-                author_cache=author_cache,
-                organization_cache=organization_cache,
-                tag_cache=tag_cache,
+            document_data = result.document
+            fingerprint = _deduplication_fingerprint(document_data)
+            doi = document_data["doi"]
+            duplicate_by_doi = documents_by_doi.get(doi) if doi else None
+            duplicate_by_content = (
+                documents_by_fingerprint.get(fingerprint) if fingerprint else None
             )
-            final_counts = _counts(session)
-            quality_tier_counts = _tier_counts(session)
-            run.status = "completed"
-            run.ended_at = datetime.now(UTC)
-            run.processed = counters["processed"]
-            run.inserted = counters["inserted"]
-            run.already_imported = counters["already_imported"]
-            run.skipped = counters["skipped"]
-            run.warnings = counters["warnings"]
-            run.final_document_count = final_counts["documents"]
-            run.final_author_count = final_counts["authors"]
-            run.final_organization_count = final_counts["organizations"]
-            run.final_tag_count = final_counts["tags"]
-            session.flush()
-            summary = {
-                "run_id": run.id,
-                "status": run.status,
-                "processed": run.processed,
-                "inserted": run.inserted,
-                "already_imported": run.already_imported,
-                "skipped": run.skipped,
-                "warnings": run.warnings,
-                "final_counts": final_counts,
-            }
-    except IngestionBusyError:
-        raise
-    except Exception as error:
+            duplicate = duplicate_by_doi or duplicate_by_content
+            if duplicate is not None:
+                if duplicate.id is None:
+                    self._session.flush()
+                if (
+                    duplicate_by_doi
+                    and fingerprint
+                    and duplicate.content_fingerprint != fingerprint
+                ):
+                    reason = "duplicate_conflicting_content"
+                elif duplicate_by_content and doi and duplicate.doi and duplicate.doi != doi:
+                    reason = "duplicate_conflicting_doi"
+                else:
+                    reason = "duplicate_document"
+                self._add_issue(
+                    record.source_file,
+                    record.source_line,
+                    Issue("document", reason, str(duplicate.id)),
+                    external_id,
+                )
+                self.counters["already_imported"] += 1
+                continue
+
+            author_name = document_data.pop("author_name")
+            organization_name = document_data.pop("organization_name")
+            tags = document_data.pop("tags")
+            author = (
+                self._get_or_create(Author, author_name, self.author_cache) if author_name else None
+            )
+            organization = (
+                self._get_or_create(Organization, organization_name, self.organization_cache)
+                if organization_name
+                else None
+            )
+            document = Document(
+                **document_data,
+                content_fingerprint=fingerprint,
+                author=author,
+                organization=organization,
+            )
+            document.tags = [self._get_or_create(Tag, tag, self.tag_cache) for tag in tags]
+            self._session.add(document)
+            if fingerprint:
+                documents_by_fingerprint[fingerprint] = document
+            if doi:
+                documents_by_doi[doi] = document
+            self.counters["inserted"] += 1
+        self._session.flush()
+        self.pending.clear()
+
+    def _get_or_create(self, model: type[Any], name: str, cache: dict[str, Any]) -> Any:
+        if name in cache:
+            return cache[name]
+        entity = self._session.scalar(select(model).where(model.name == name))
+        if entity is None:
+            entity = model(name=name)
+            self._session.add(entity)
+        cache[name] = entity
+        return entity
+
+    def _add_issue(
+        self,
+        source_file: str,
+        source_line: int,
+        issue: Issue,
+        external_id: str | None = None,
+    ) -> None:
+        self._session.add(_make_issue(self._run.id, source_file, source_line, issue, external_id))
+        self.counters["warnings"] += 1
+
+    def _complete(self) -> dict[str, Any]:
+        self._run.status = "completed"
+        self._run.ended_at = datetime.now(UTC)
+        self._run.processed = self.counters["processed"]
+        self._run.inserted = self.counters["inserted"]
+        self._run.already_imported = self.counters["already_imported"]
+        self._run.skipped = self.counters["skipped"]
+        self._run.warnings = self.counters["warnings"]
+        self._session.flush()
+        return {
+            "run_id": self._run.id,
+            "status": self._run.status,
+            "processed": self._run.processed,
+            "inserted": self._run.inserted,
+            "already_imported": self._run.already_imported,
+            "skipped": self._run.skipped,
+            "warnings": self._run.warnings,
+        }
+
+    def _record_failure(self, error: Exception) -> None:
         failure_reason = type(error).__name__
         try:
-            with Session(engine) as failure_session, failure_session.begin():
+            with Session(self.engine) as failure_session, failure_session.begin():
                 failed_run = IngestionRun(
                     status="failed",
                     ended_at=datetime.now(UTC),
-                    processed=counters["processed"],
+                    processed=self.counters["processed"],
                     inserted=0,
-                    already_imported=counters["already_imported"],
-                    skipped=counters["skipped"],
-                    warnings=counters["warnings"],
+                    already_imported=self.counters["already_imported"],
+                    skipped=self.counters["skipped"],
+                    warnings=self.counters["warnings"],
                     failure_reason=failure_reason,
                 )
                 failure_session.add(failed_run)
@@ -360,8 +340,15 @@ def ingest(engine: Engine, input_path: Path) -> dict[str, Any]:
         except Exception:
             failed_run_id = None
         emit("ingestion_failed", run_id=failed_run_id, reason=failure_reason)
-        raise RuntimeError("ingestion failed") from error
 
-    emit("scoring_completed", run_id=summary["run_id"], quality_tiers=quality_tier_counts)
-    emit("ingestion_completed", **summary)
-    return summary
+    @property
+    def _session(self) -> Session:
+        if self.session is None:
+            raise RuntimeError("ingestor session is not active")
+        return self.session
+
+    @property
+    def _run(self) -> IngestionRun:
+        if self.run_record is None or self.run_record.id is None:
+            raise RuntimeError("ingestion run has not been started")
+        return self.run_record
