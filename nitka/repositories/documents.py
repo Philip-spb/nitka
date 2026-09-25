@@ -83,6 +83,10 @@ class DocumentRepository:
 
     def stats(self) -> dict[str, object]:
         document_count = self.session.scalar(select(func.count(Document.id))) or 0
+        quality_tiers: dict[str, int] = {"low": 0, "medium": 0, "high": 0}
+        statuses: dict[str, int] = {}
+        organizations_by_document: dict[str, int] = {}
+        tags_by_document: dict[str, int] = {}
         result: dict[str, object] = {
             "documents": document_count,
             "authors": self.session.scalar(select(func.count(Author.id))) or 0,
@@ -91,42 +95,34 @@ class DocumentRepository:
             "average_completeness_score": self.session.scalar(
                 select(func.avg(Document.completeness_score))
             ),
-            "quality_tiers": {"low": 0, "medium": 0, "high": 0},
-            "statuses": {},
-            "organizations_by_document": {},
-            "tags_by_document": {},
+            "quality_tiers": quality_tiers,
+            "statuses": statuses,
+            "organizations_by_document": organizations_by_document,
+            "tags_by_document": tags_by_document,
         }
-        tiers = result["quality_tiers"]
-        assert isinstance(tiers, dict)
         for tier, count in self.session.execute(
             select(Document.quality_tier, func.count(Document.id)).group_by(Document.quality_tier)
         ):
-            tiers[tier] = count
+            quality_tiers[tier] = count
 
-        statuses = result["statuses"]
-        assert isinstance(statuses, dict)
         for status, count in self.session.execute(
             select(Document.status, func.count(Document.id)).group_by(Document.status)
         ):
             statuses[status or "unknown"] = statuses.get(status or "unknown", 0) + count
 
-        organizations = result["organizations_by_document"]
-        assert isinstance(organizations, dict)
         for name, count in self.session.execute(
             select(Organization.name, func.count(Document.id))
             .join(Document, Document.organization_id == Organization.id)
             .group_by(Organization.name)
         ):
-            organizations[name] = count
+            organizations_by_document[name] = count
 
-        tags = result["tags_by_document"]
-        assert isinstance(tags, dict)
         for name, count in self.session.execute(
             select(Tag.name, func.count(document_tags.c.document_id))
             .join(document_tags, document_tags.c.tag_id == Tag.id)
             .group_by(Tag.name)
         ):
-            tags[name] = count
+            tags_by_document[name] = count
         return result
 
     @staticmethod
