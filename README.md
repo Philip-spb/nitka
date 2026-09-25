@@ -1,48 +1,102 @@
-# Document intake and review service
+# Document Intake and Review Service
 
-## Agreed ingestion policy
+Small synchronous backend for importing noisy JSONL/NDJSON documents into
+PostgreSQL and querying the normalized result.
 
-The source is deliberately noisy. The importer processes input one JSONL line
-at a time, continues after bad records, and records every skipped record or
-field-level repair in the ingestion log.
+The importer reads one JSONL/NDJSON file record by record and writes PostgreSQL
+in batches of 250. It is deliberately synchronous: the dataset size does not
+justify a queue, worker, or async write pipeline. `POST /ingestions` and the
+CLI call the same import service.
 
-### Record acceptance
+## Tech stack
 
-- A JSON value that is not an object (for example, a top-level array) is
-  skipped with `record_is_not_object`.
-- A document requires a `title`: it must be a non-empty string after trimming.
-  Missing, `null`, empty, or non-string titles cause the whole record to be
-  skipped with `missing_required_title`.
-- `external_id` is useful for source traceability but is not a required field.
-- All other recoverable field problems keep the document and create a warning
-  with the source file, line number, field, original value, and reason.
+- Python 3.13 and `uv`
+- FastAPI and Uvicorn
+- PostgreSQL 17 in Podman Compose
+- SQLAlchemy 2 and synchronous psycopg 3
+- Alembic migrations
+- pytest and Ruff
 
-### Normalisation rules
+## Quick start
 
-- Whitespace is trimmed from textual values.
-- Tags accept an array of strings or a comma-separated string. Empty values,
-  non-string array items, numbers, and objects are omitted with a warning.
-- `open_access` and `peer_reviewed` accept `true`/`false`, `1`/`0`, and
-  `yes`/`no` (case-insensitive). Other values become `NULL` with a warning.
-- Dates accept `YYYY-MM-DD` and `YYYYMMDD`. Invalid, empty, and absent dates
-  become `NULL` with a warning. Date filtering uses `published_at` only.
-  Valid records where `updated_at` precedes `published_at` are retained and
-  receive `updated_before_published`.
-- `document_type` is lower-cased; empty values become `NULL`.
-- `language` maps `english` to `en`; `xx`, empty, and absent values are
-  treated as unknown (`NULL`).
-- Authors and organisations require non-empty text. Numeric values are
-  omitted with a warning. Similar-looking names are not merged automatically.
-- `citation_count`, `page_count`, and `word_count` are nullable integers.
-  Only integers greater than or equal to zero are stored; non-numeric and
-  negative values become `NULL` with a warning.
-- The incoming `relevance_score` is not used for ranking because its source
-  scale is inconsistent. It is outside the MVP schema.
+Create local configuration, start PostgreSQL, install dependencies, and apply
+the schema migration:
 
-### Additional processing: simple scoring/ranking
+```bash
+cp .env.example .env
+podman compose up -d
+uv sync
+uv run alembic upgrade head
+```
 
-Each accepted document receives a deterministic `completeness_score` (0–100)
-and a `quality_tier`:
+The default database is available only on `127.0.0.1:5433`, with persistent
+data in the `nitka_pgdata` named Podman volume. `podman compose stop` stops the
+container without removing the volume.
+
+To import one file from the command line:
+
+```bash
+uv run nitka ingest --input /absolute/path/to/documents.jsonl
+```
+
+The command requires a path to a `.jsonl` or `.ndjson` file. It writes structured
+JSON events through the standard Python logger. `INPUT_DIR` configures the
+directory used to persist files uploaded through the API; by default it is
+`input_docs/`.
+
+To start the API:
+
+```bash
+uv run uvicorn nitka.api:app --host 127.0.0.1 --port 8000
+```
+
+Interactive OpenAPI documentation is then available at
+`http://127.0.0.1:8000/docs`.
+
+## Import policy
+
+The importer retains recoverable documents and writes an `ingestion_issues`
+row plus a JSON log event for each warning. A top-level JSON value that is not
+an object, malformed JSON, a blank line, or a missing/non-text/blank title is
+skipped. A valid document always has a non-empty `title`.
+
+- Text is trimmed; text PostgreSQL cannot store (NUL or surrogate characters)
+  is removed with a warning. Author and organization placeholders such as
+  `N/A` are removed.
+- Tags accept a list of strings or comma-separated string. Tags are trimmed,
+  lower-cased and de-duplicated within a document. Invalid values are ignored.
+- `open_access` and `peer_reviewed` accept booleans, `0`/`1`, and
+  `true`/`false`/`yes`/`no` strings.
+- Dates accept `YYYY-MM-DD` or `YYYYMMDD`. Invalid, empty, and missing dates
+  become `NULL` and emit a warning. `updated_at` earlier than `published_at`
+  is retained with `updated_before_published`.
+- `status` accepts `published`, `draft`, `archived`, and `unknown`, ignoring
+  case. Unsupported values become `NULL`.
+- `document_type` is lower-cased. `english` maps to `en`; `xx` becomes `NULL`.
+- `citation_count`, `page_count`, and `word_count` accept only non-negative
+  JSON integers. Text, floats, booleans and negative values become `NULL`.
+- A URL must be a credential-free HTTP(S) URL with a hostname. DOI must match
+  `10.<digits>/...`. There are no network lookups.
+
+`external_id` is optional and intentionally not unique. A valid DOI is unique
+after normalization. The internal `content_fingerprint` is a deduplication
+fingerprint with two deterministic forms: when a record has `title` and `body`,
+it is SHA-256 of their Unicode-normalized, whitespace-collapsed, case-folded
+values; otherwise, when DOI is absent, it is SHA-256 of the complete normalized
+record. The latter prevents an exact normalized record from being inserted on a
+repeat import without claiming that title alone identifies a document.
+PostgreSQL enforces uniqueness of both DOI and the fingerprint. A duplicate or
+conflicting DOI/content combination is skipped with an `ingestion_issues`
+warning.
+
+One transaction-scoped PostgreSQL advisory lock prevents concurrent imports. A
+second API request receives `409 Conflict`. A fatal failure rolls back the
+documents and issues from the active import and records a separate failed run.
+
+## Completeness score
+
+The additional processing step is deterministic ranking, calculated after
+normalization and exposed in document responses and `/stats`.
 
 | Condition | Points |
 | --- | ---: |
@@ -52,27 +106,126 @@ and a `quality_tier`:
 | Valid `published_at` | 10 |
 | At least one valid tag | 10 |
 | Valid author | 5 |
-| Valid organisation | 5 |
+| Valid organization | 5 |
 | Valid URL or DOI | 10 |
 
-- `high`: 80–100
-- `medium`: 50–79
-- `low`: 0–49
+`high` is 80–100, `medium` is 50–79, and `low` is 0–49. This measures data
+completeness, not relevance or editorial quality. The inconsistent source
+`relevance_score` and `version` fields are outside the MVP schema.
 
-The document API returns the score and tier. Aggregate statistics include the
-average score and the count of documents in each tier.
+## Database schema
 
-## Initial JSONL profiling
+| Table | Purpose |
+| --- | --- |
+| `documents` | Normalized document, nullable metadata, score, tier and deduplication keys |
+| `authors` | Unique trimmed author names |
+| `organizations` | Unique trimmed organization names |
+| `tags` | Unique normalized tag names |
+| `document_tags` | Document-to-tag many-to-many relationship |
+| `ingestion_runs` | Lifecycle, counters, final entity counts and failure status |
+| `ingestion_issues` | File/line-level skipped-record and field warning evidence |
 
-`analyze_jsonl.py` reads JSONL/NDJSON records one at a time and produces a
-data-quality profile. It does not change source data. The report includes file
-and record counts, malformed JSON examples, field presence/null/empty counts,
-observed JSON types, and frequent values.
+The initial schema is versioned in
+[`alembic/versions/0001_initial_schema.py`](alembic/versions/0001_initial_schema.py).
+It includes database checks for nonblank title, non-negative numeric counts,
+score range and valid quality tier.
+
+## HTTP API
+
+### Trigger import
 
 ```bash
-uv run python analyze_jsonl.py /path/to/input_docs
+curl -X POST http://127.0.0.1:8000/ingestions \
+  -F 'file=@/absolute/path/to/documents.jsonl;type=application/x-ndjson'
 ```
 
-Reports are written to `reports/data-profile.json` (for further analysis) and
-`reports/data-profile.md` (for a quick review). Options such as
-`--sample-limit 25` and `--output-dir my-report` are available via `--help`.
+The endpoint accepts one `.jsonl` or `.ndjson` file as `multipart/form-data`.
+It first saves the upload in `input_docs/` (or `INPUT_DIR`) under a generated
+unique name, then imports that stored file. The call waits for import completion
+and returns a `200` summary such as:
+
+```json
+{
+  "run_id": 1,
+  "status": "completed",
+  "processed": 9,
+  "inserted": 5,
+  "already_imported": 0,
+  "skipped": 4,
+  "warnings": 18,
+  "final_counts": {"documents": 5, "authors": 2, "organizations": 1, "tags": 3}
+}
+```
+
+### List and filter documents
+
+```bash
+curl 'http://127.0.0.1:8000/documents?tag=energy&status=published&sort=score'
+curl 'http://127.0.0.1:8000/documents?q=energy&date_from=2024-01-01&date_to=2024-12-31'
+```
+
+`GET /documents` supports `page` (default 1), `page_size` (default 20, maximum
+100), `date_from`, `date_to`, `tag`, `organization`, `status`, `q`, and
+`sort=id|score`. Filters combine with AND. Search is case-insensitive literal
+substring matching against title/body; `%` and `_` have no wildcard meaning.
+
+### Retrieve one document and statistics
+
+```bash
+curl http://127.0.0.1:8000/documents/1
+curl http://127.0.0.1:8000/stats
+```
+
+`GET /documents/{id}` returns related author, organization and tags. `GET /stats`
+returns entity totals, status/organization/tag distributions, average
+score and all three quality-tier counts.
+
+## Sample full run and stats
+
+The following output is from a complete run against the hand-authored
+`tests/fixtures/sample.jsonl` fixture, not the supplied input dataset:
+
+```text
+{"event":"ingestion_started","input_file":"/…/sample.jsonl"}
+{"event":"record_skipped","file":"sample.jsonl","line":6,"reason":"invalid_json"}
+{"event":"record_warning","file":"sample.jsonl","line":2,"field":"citation_count","reason":"invalid_nonnegative_integer"}
+{"event":"record_warning","file":"sample.jsonl","line":5,"field":"title","reason":"missing_required_title"}
+{"event":"scoring_completed","quality_tiers":{"low":2,"medium":1,"high":2}}
+{"event":"ingestion_completed","run_id":1,"processed":9,"inserted":5,"already_imported":0,"skipped":4,"warnings":18,"final_counts":{"documents":5,"authors":2,"organizations":1,"tags":3}}
+```
+
+When a normalized record is not inserted because it matches an existing
+document, the log additionally identifies both records without exposing the
+body:
+
+```text
+{"event":"document_not_inserted","file":"second.jsonl","line":1,"external_id":"doc-12","title":"Climate Policy","reason":"duplicate_document","deduplication_rule":"title_body_fingerprint","existing_document_id":42}
+```
+
+The verified fixture `/stats` response was:
+
+```json
+{
+  "documents": 5,
+  "authors": 2,
+  "organizations": 1,
+  "tags": 3,
+  "average_completeness_score": 58.0,
+  "quality_tiers": {"low": 2, "medium": 1, "high": 2},
+  "statuses": {"unknown": 2, "draft": 1, "published": 1, "archived": 1},
+  "organizations_by_document": {"Example Institute": 1},
+  "tags_by_document": {"policy": 2, "water": 1, "energy": 2}
+}
+```
+
+## Development
+
+```bash
+uv run pytest -q
+uv run ruff check nitka tests alembic main.py
+uv run ruff format --check nitka tests alembic main.py
+```
+
+Tests create and drop a unique PostgreSQL schema for each test and never touch
+application tables. `input_docs/`, local reports, exploratory profiler output,
+`.env`, and `docs/` are ignored by Git.

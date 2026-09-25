@@ -8,7 +8,14 @@ wheels/
 input_docs/*
 !input_docs/.gitkeep
 reports/
+docs/
 analyze_jsonl.py
+.env
+.env.*
+!.env.example
+.pytest_cache/
+.ruff_cache/
+.coverage
 
 # Virtual environments
 .venv

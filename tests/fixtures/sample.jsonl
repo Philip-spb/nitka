@@ -1,0 +1,9 @@
+{"external_id":"shared-id","title":"  Solar energy review  ","abstract":"Synthetic abstract for testing.","body":"Synthetic body about energy policy.","published_at":"2024-01-15","updated_at":"2024-01-20","author_name":"Alice Example","organization_name":"Example Institute","tags":[" Energy ","policy","energy"],"status":"PUBLISHED","document_type":"REPORT","language":"english","region":"Europe","source_name":"Synthetic fixture","url":"https://example.org/solar","doi":"10.1234/EXAMPLE","citation_count":0,"page_count":12,"word_count":6,"open_access":"yes","peer_reviewed":"false"}
+{"external_id":"sparse","title":"Minimal record","citation_count":-7,"page_count":"many","word_count":true,"status":0,"tags":123}
+{"title":"Water policy","abstract":"Synthetic water abstract.","author_name":"Bob Example","organization_name":42,"tags":" Water,water,policy ","published_at":"invalid-date","updated_at":null,"status":false,"url":"http://","doi":"not-a-doi"}
+{"external_id":"shared-id","title":"Energy transition","abstract":"Synthetic transition abstract.","body":"Synthetic transition body.","published_at":20240110,"updated_at":"2023-12-01","tags":["energy"],"status":"Draft","open_access":0}
+{"title":null,"body":"This synthetic record must be skipped."}
+{not valid json
+[]
+
+{"external_id":"literal","title":"Literal 100%_energy","published_at":"20240101","updated_at":"20240101","status":"archived"}
