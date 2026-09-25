@@ -6,7 +6,7 @@ from datetime import date
 from typing import Literal
 
 from sqlalchemy import func, or_, select
-from sqlalchemy.orm import Session, selectinload
+from sqlalchemy.orm import Session, lazyload, selectinload
 
 from nitka.models import Author, Document, Organization, Tag, document_tags
 
@@ -56,7 +56,10 @@ class DocumentRepository:
         statement = statement.options(
             selectinload(Document.author),
             selectinload(Document.organization),
-            selectinload(Document.tags),
+            # Tags are not part of DocumentItem, returned by the list endpoint.
+            # Override the relationship's default select-in strategy so this
+            # endpoint does not issue an otherwise unused query for them.
+            lazyload(Document.tags),
         )
         if sort == "score":
             statement = statement.order_by(

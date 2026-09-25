@@ -4,9 +4,12 @@ from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
+from sqlalchemy import event
+from sqlalchemy.orm import Session
 
 from nitka.api import create_app
 from nitka.config import Settings
+from nitka.repositories.documents import DocumentRepository
 
 FIXTURE_FILE = Path(__file__).parent / "fixtures" / "sample.jsonl"
 
@@ -67,6 +70,35 @@ def test_documents_list_supports_pagination_filters_literal_search_and_score_sor
         == 2
     )
     assert client.get("/documents", params={"q": "100%_energy"}).json()["total"] == 1
+
+
+def test_documents_list_does_not_load_tags(client, db_engine):
+    import_fixture(client)
+    statements: list[str] = []
+
+    def collect_statement(*args):
+        statements.append(args[2])
+
+    event.listen(db_engine, "before_cursor_execute", collect_statement)
+    try:
+        with Session(db_engine) as session:
+            documents, total = DocumentRepository(session).list_documents(
+                page=1,
+                page_size=2,
+                date_from=None,
+                date_to=None,
+                tag=None,
+                organization=None,
+                status=None,
+                query=None,
+                sort="id",
+            )
+    finally:
+        event.remove(db_engine, "before_cursor_execute", collect_statement)
+
+    assert total == 5
+    assert len(documents) == 2
+    assert not any("tags" in statement.lower() for statement in statements)
 
 
 def test_document_detail_and_stats_include_related_entities_and_scoring(client):
