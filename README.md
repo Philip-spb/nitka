@@ -265,11 +265,9 @@ The following output is from a complete run against the hand-authored
 {"event":"ingestion_completed","run_id":1,"processed":9,"inserted":5,"already_imported":0,"skipped":4,"warnings":18}
 ```
 
-An [extended captured log excerpt from a completed import of a supplied source
-file](examples/ingestion-run-7.log) contains 505 real event lines, including
-source-line warnings, skipped documents, scoring, and final counters. It starts
-after the `ingestion_started` event; the compact fixture log above remains the
-self-contained start-to-finish example.
+A [captured ingestion log for `documents_1.jsonl`](examples/ingestion-documents-1.log)
+contains structured warnings, skipped-document events, scoring, and the final
+ingestion summary.
 
 After importing the supplied dataset, the `/stats` response was:
 
