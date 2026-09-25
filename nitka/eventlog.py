@@ -10,6 +10,6 @@ from typing import Any
 logger = logging.getLogger(__name__)
 
 
-def emit(event: str, **fields: Any) -> None:
+def emit_log(event: str, **fields: Any) -> None:
     payload = {"timestamp": datetime.now(UTC).isoformat(), "event": event, **fields}
     logger.info(json.dumps(payload, ensure_ascii=False, default=str))

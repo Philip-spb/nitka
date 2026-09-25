@@ -33,5 +33,7 @@ def main(argv: list[str] | None = None) -> int:
     except (RuntimeError, ValueError) as error:
         logger.error("Ingestion failed: %s", error)
         parser.error(str(error))
-    logger.info("Ingestion completed: %s", json.dumps(summary, ensure_ascii=False))
+    logger.info(
+        "Ingestion completed: %s", json.dumps(summary.model_dump(mode="json"), ensure_ascii=False)
+    )
     return 0

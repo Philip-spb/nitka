@@ -46,16 +46,6 @@ class DocumentPage(BaseModel):
     page_size: int
 
 
-class IngestionResponse(BaseModel):
-    run_id: int
-    status: str
-    processed: int
-    inserted: int
-    already_imported: int
-    skipped: int
-    warnings: int
-
-
 class Stats(BaseModel):
     documents: int
     authors: int

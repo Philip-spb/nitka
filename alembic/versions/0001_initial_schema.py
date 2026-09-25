@@ -22,6 +22,7 @@ _ingestion_run_status = postgresql.ENUM(
 
 def upgrade() -> None:
     _ingestion_run_status.create(op.get_bind(), checkfirst=True)
+    op.execute("CREATE EXTENSION IF NOT EXISTS pg_trgm")
     op.create_table(
         "authors",
         sa.Column("id", sa.Integer(), primary_key=True),
@@ -95,9 +96,26 @@ def upgrade() -> None:
         sa.UniqueConstraint("content_fingerprint", name="documents_content_fingerprint_unique"),
     )
     op.create_index("documents_published_at_idx", "documents", ["published_at"])
-    op.create_index("documents_status_idx", "documents", ["status"])
-    op.create_index("documents_score_idx", "documents", ["completeness_score"])
+    op.create_index(
+        "documents_score_desc_id_idx",
+        "documents",
+        [sa.text("completeness_score DESC"), "id"],
+    )
     op.create_index("documents_organization_id_idx", "documents", ["organization_id"])
+    op.create_index(
+        "documents_title_trgm_idx",
+        "documents",
+        ["title"],
+        postgresql_using="gin",
+        postgresql_ops={"title": "gin_trgm_ops"},
+    )
+    op.create_index(
+        "documents_body_trgm_idx",
+        "documents",
+        ["body"],
+        postgresql_using="gin",
+        postgresql_ops={"body": "gin_trgm_ops"},
+    )
     op.create_table(
         "document_tags",
         sa.Column(
@@ -127,14 +145,19 @@ def upgrade() -> None:
         sa.Column("severity", sa.String(length=20), nullable=False, server_default="warning"),
         sa.Column("value_preview", sa.String(length=200), nullable=False),
     )
+    op.create_index(
+        "document_tags_tag_id_document_id_idx", "document_tags", ["tag_id", "document_id"]
+    )
 
 
 def downgrade() -> None:
     op.drop_table("ingestion_issues")
+    op.drop_index("document_tags_tag_id_document_id_idx", table_name="document_tags")
     op.drop_table("document_tags")
+    op.drop_index("documents_body_trgm_idx", table_name="documents")
+    op.drop_index("documents_title_trgm_idx", table_name="documents")
     op.drop_index("documents_organization_id_idx", table_name="documents")
-    op.drop_index("documents_score_idx", table_name="documents")
-    op.drop_index("documents_status_idx", table_name="documents")
+    op.drop_index("documents_score_desc_id_idx", table_name="documents")
     op.drop_index("documents_published_at_idx", table_name="documents")
     op.drop_table("documents")
     op.drop_table("ingestion_runs")

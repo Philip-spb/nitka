@@ -15,10 +15,10 @@ from sqlalchemy.orm import Session
 
 from nitka.config import Settings
 from nitka.db import create_db_engine
-from nitka.ingestion import SUPPORTED_SUFFIXES, IngestionBusyError, ingest
+from nitka.ingestion import SUPPORTED_SUFFIXES, IngestionBusyError, IngestionResult, ingest
 from nitka.models import Document
 from nitka.queries import get_document, list_documents, stats
-from nitka.schemas import DocumentDetail, DocumentItem, DocumentPage, IngestionResponse, Stats
+from nitka.schemas import DocumentDetail, DocumentItem, DocumentPage, Stats
 
 logger = logging.getLogger(__name__)
 
@@ -79,10 +79,10 @@ def create_app(settings: Settings | None = None, engine: Engine | None = None) -
     active_engine = engine or create_db_engine(active_settings)
     app = FastAPI(title="Document Intake and Review Service", version="0.1.0")
 
-    @app.post("/ingestions", response_model=IngestionResponse)
+    @app.post("/ingestions", response_model=IngestionResult)
     def create_ingestion(
         file: Annotated[UploadFile, File(description="JSONL or NDJSON file")],
-    ) -> dict:
+    ) -> IngestionResult:
         uploaded_file = _store_upload(file, active_settings.input_dir)
         try:
             return ingest(active_engine, uploaded_file)

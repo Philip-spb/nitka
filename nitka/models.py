@@ -17,6 +17,7 @@ from sqlalchemy import (
     Table,
     Text,
     UniqueConstraint,
+    desc,
     func,
 )
 from sqlalchemy import (
@@ -35,6 +36,7 @@ document_tags = Table(
     Column("document_id", ForeignKey("documents.id", ondelete="CASCADE"), primary_key=True),
     Column("tag_id", ForeignKey("tags.id", ondelete="CASCADE"), primary_key=True),
 )
+Index("document_tags_tag_id_document_id_idx", document_tags.c.tag_id, document_tags.c.document_id)
 
 
 class Author(Base):
@@ -107,9 +109,20 @@ class Document(Base):
         UniqueConstraint("doi", name="documents_doi_unique"),
         UniqueConstraint("content_fingerprint", name="documents_content_fingerprint_unique"),
         Index("documents_published_at_idx", "published_at"),
-        Index("documents_status_idx", "status"),
-        Index("documents_score_idx", "completeness_score"),
+        Index("documents_score_desc_id_idx", desc("completeness_score"), "id"),
         Index("documents_organization_id_idx", "organization_id"),
+        Index(
+            "documents_title_trgm_idx",
+            "title",
+            postgresql_using="gin",
+            postgresql_ops={"title": "gin_trgm_ops"},
+        ),
+        Index(
+            "documents_body_trgm_idx",
+            "body",
+            postgresql_using="gin",
+            postgresql_ops={"body": "gin_trgm_ops"},
+        ),
     )
 
     id: Mapped[int] = mapped_column(primary_key=True)

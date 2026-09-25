@@ -9,10 +9,11 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from pydantic import BaseModel
 from sqlalchemy import Engine, or_, select, text
 from sqlalchemy.orm import Session
 
-from nitka.eventlog import emit
+from nitka.eventlog import emit_log
 from nitka.models import (
     Author,
     Document,
@@ -61,6 +62,16 @@ class IngestionCounters:
     already_imported: int = 0
     skipped: int = 0
     warnings: int = 0
+
+
+class IngestionResult(BaseModel):
+    run_id: int
+    status: IngestionStatus
+    processed: int
+    inserted: int
+    already_imported: int
+    skipped: int
+    warnings: int
 
 
 def _input_file(path: Path) -> Path:
@@ -118,7 +129,7 @@ def _external_id_for_log(value: Any) -> str | None:
     return None
 
 
-def ingest(engine: Engine, input_path: Path) -> dict[str, Any]:
+def ingest(engine: Engine, input_path: Path) -> IngestionResult:
     """Import one JSONL/NDJSON file in one PostgreSQL transaction."""
     return Ingestor(engine, input_path).run()
 
@@ -137,8 +148,8 @@ class Ingestor:
         self.session: Session | None = None
         self.run_record: IngestionRun | None = None
 
-    def run(self) -> dict[str, Any]:
-        emit("ingestion_started", input_file=str(self.input_file))
+    def run(self) -> IngestionResult:
+        emit_log("ingestion_started", input_file=str(self.input_file))
         try:
             with Session(self.engine) as session, session.begin():
                 self.session = session
@@ -156,8 +167,8 @@ class Ingestor:
         finally:
             self.session = None
 
-        emit("scoring_completed", run_id=summary["run_id"], scored_documents=summary["inserted"])
-        emit("ingestion_completed", **summary)
+        emit_log("scoring_completed", run_id=summary.run_id, scored_documents=summary.inserted)
+        emit_log("ingestion_completed", **summary.model_dump(mode="json"))
         return summary
 
     def _acquire_lock(self) -> None:
@@ -177,7 +188,7 @@ class Ingestor:
         if not raw_line.strip():
             self._add_issue(source_file, line_number, Issue("record", "blank_line", "<blank line>"))
             self.counters.skipped += 1
-            emit("record_skipped", file=source_file, line=line_number, reason="blank_line")
+            emit_log("record_skipped", file=source_file, line=line_number, reason="blank_line")
             return
         try:
             source_value = _json_loads(raw_line.decode("utf-8"))
@@ -185,7 +196,7 @@ class Ingestor:
             issue = Issue("record", "invalid_json", f"<{type(error).__name__}: {str(error)[:160]}>")
             self._add_issue(source_file, line_number, issue)
             self.counters.skipped += 1
-            emit("record_skipped", file=source_file, line=line_number, reason=issue.reason)
+            emit_log("record_skipped", file=source_file, line=line_number, reason=issue.reason)
             return
 
         self.pending.append(PendingRecord(source_file, line_number, source_value))
@@ -260,7 +271,7 @@ class Ingestor:
         )
         for issue in result.issues:
             self._add_issue(record.source_file, record.source_line, issue, external_id)
-            emit(
+            emit_log(
                 "record_warning",
                 file=record.source_file,
                 line=record.source_line,
@@ -270,7 +281,7 @@ class Ingestor:
         if result.document is None:
             self.counters.skipped += 1
             reason = result.issues[0].reason if result.issues else "invalid_document"
-            emit(
+            emit_log(
                 "document_not_inserted",
                 file=record.source_file,
                 line=record.source_line,
@@ -376,7 +387,7 @@ class Ingestor:
         self._session.add(_make_issue(self._run.id, source_file, source_line, issue, external_id))
         self.counters.warnings += 1
 
-    def _complete(self) -> dict[str, Any]:
+    def _complete(self) -> IngestionResult:
         self._run.status = IngestionStatus.COMPLETED
         self._run.ended_at = datetime.now(UTC)
         self._run.processed = self.counters.processed
@@ -385,15 +396,15 @@ class Ingestor:
         self._run.skipped = self.counters.skipped
         self._run.warnings = self.counters.warnings
         self._session.flush()
-        return {
-            "run_id": self._run.id,
-            "status": self._run.status,
-            "processed": self._run.processed,
-            "inserted": self._run.inserted,
-            "already_imported": self._run.already_imported,
-            "skipped": self._run.skipped,
-            "warnings": self._run.warnings,
-        }
+        return IngestionResult(
+            run_id=self._run.id,
+            status=self._run.status,
+            processed=self._run.processed,
+            inserted=self._run.inserted,
+            already_imported=self._run.already_imported,
+            skipped=self._run.skipped,
+            warnings=self._run.warnings,
+        )
 
     def _record_failure(self, error: Exception) -> None:
         failure_reason = type(error).__name__
@@ -414,7 +425,7 @@ class Ingestor:
                 failed_run_id = failed_run.id
         except Exception:
             failed_run_id = None
-        emit("ingestion_failed", run_id=failed_run_id, reason=failure_reason)
+        emit_log("ingestion_failed", run_id=failed_run_id, reason=failure_reason)
 
     @property
     def _session(self) -> Session:

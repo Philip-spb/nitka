@@ -17,14 +17,11 @@ FIXTURE_FILE = Path(__file__).parent / "fixtures" / "sample.jsonl"
 def test_imports_normalized_documents_and_records_all_outcomes(db_engine):
     summary = ingest(db_engine, FIXTURE_FILE)
 
-    assert summary["status"] == "completed"
-    assert (
-        summary["processed"]
-        == summary["inserted"] + summary["already_imported"] + summary["skipped"]
-    )
-    assert summary["inserted"] == 5
-    assert summary["skipped"] == 4
-    assert summary["warnings"] > 0
+    assert summary.status == "completed"
+    assert summary.processed == summary.inserted + summary.already_imported + summary.skipped
+    assert summary.inserted == 5
+    assert summary.skipped == 4
+    assert summary.warnings > 0
 
     with Session(db_engine) as session:
         assert session.scalar(select(func.count(Document.id))) == 5
@@ -40,7 +37,7 @@ def test_imports_normalized_documents_and_records_all_outcomes(db_engine):
         assert document.language == "en"
         assert document.completeness_score == 100
         assert document.quality_tier == "high"
-        assert session.scalar(select(func.count(IngestionIssue.id))) >= summary["warnings"]
+        assert session.scalar(select(func.count(IngestionIssue.id))) >= summary.warnings
         assert session.scalar(select(func.count(IngestionRun.id))) == 1
 
 
@@ -48,10 +45,10 @@ def test_repeat_import_does_not_add_any_document(db_engine):
     first = ingest(db_engine, FIXTURE_FILE)
     second = ingest(db_engine, FIXTURE_FILE)
 
-    assert second["inserted"] == 0
-    assert second["already_imported"] == first["inserted"]
+    assert second.inserted == 0
+    assert second.already_imported == first.inserted
     with Session(db_engine) as session:
-        assert session.scalar(select(func.count(Document.id))) == first["inserted"]
+        assert session.scalar(select(func.count(Document.id))) == first.inserted
 
 
 def test_invalid_document_emits_a_not_inserted_event(db_engine, tmp_path, caplog):
@@ -61,7 +58,7 @@ def test_invalid_document_emits_a_not_inserted_event(db_engine, tmp_path, caplog
     caplog.set_level(logging.INFO, logger="nitka.eventlog")
     summary = ingest(db_engine, path)
 
-    assert summary["skipped"] == 1
+    assert summary.skipped == 1
     events = [json.loads(record.message) for record in caplog.records]
     invalid_event = next(event for event in events if event["event"] == "document_not_inserted")
     assert invalid_event == {
@@ -92,10 +89,10 @@ def test_same_normalized_title_and_body_in_two_files_is_a_duplicate(db_engine, t
     first = ingest(db_engine, first_path)
     second = ingest(db_engine, second_path)
 
-    assert first["inserted"] == 1
-    assert second["inserted"] == 0
-    assert second["already_imported"] == 1
-    assert second["warnings"] == 1
+    assert first.inserted == 1
+    assert second.inserted == 0
+    assert second.already_imported == 1
+    assert second.warnings == 1
     with Session(db_engine) as session:
         assert session.scalar(select(func.count(Document.id))) == 1
         assert session.scalar(select(IngestionIssue.reason)) == "duplicate_document"
@@ -114,7 +111,7 @@ def test_duplicate_content_does_not_enrich_the_stored_document_with_a_doi(db_eng
     ingest(db_engine, first_path)
     summary = ingest(db_engine, second_path)
 
-    assert summary["inserted"] == 0
+    assert summary.inserted == 0
     with Session(db_engine) as session:
         assert session.scalar(select(Document.doi)) is None
 
@@ -134,9 +131,9 @@ def test_same_bodyless_normalized_record_in_two_files_is_a_duplicate(db_engine, 
     first = ingest(db_engine, first_path)
     second = ingest(db_engine, second_path)
 
-    assert first["inserted"] == 1
-    assert second["inserted"] == 0
-    assert second["already_imported"] == 1
+    assert first.inserted == 1
+    assert second.inserted == 0
+    assert second.already_imported == 1
     with Session(db_engine) as session:
         assert session.scalar(select(func.count(Document.id))) == 1
         assert session.scalar(select(Document.content_fingerprint)) is not None
@@ -157,7 +154,7 @@ def test_same_title_with_different_external_ids_remains_two_documents(db_engine,
 
     summary = ingest(db_engine, path)
 
-    assert summary["inserted"] == 2
+    assert summary.inserted == 2
 
 
 def test_same_external_id_does_not_overwrite_a_distinct_source_record(db_engine, tmp_path):
@@ -175,7 +172,7 @@ def test_same_external_id_does_not_overwrite_a_distinct_source_record(db_engine,
 
     summary = ingest(db_engine, path)
 
-    assert summary["inserted"] == 2
+    assert summary.inserted == 2
     with db_engine.connect() as connection:
         assert connection.scalar(select(func.count(Document.id))) == 2
 
@@ -188,8 +185,8 @@ def test_changed_document_content_is_stored_as_a_new_document(db_engine, tmp_pat
 
     second = ingest(db_engine, path)
 
-    assert first["inserted"] == 1
-    assert second["inserted"] == 1
+    assert first.inserted == 1
+    assert second.inserted == 1
     with Session(db_engine) as session:
         assert session.scalar(select(func.count(Document.id))) == 2
 
