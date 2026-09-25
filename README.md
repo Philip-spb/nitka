@@ -17,6 +17,31 @@ CLI call the same import service.
 - Alembic migrations
 - pytest and Ruff
 
+## Architecture
+
+The service is a small synchronous application with one shared ingestion path:
+
+```text
+CLI or POST /ingestions
+        |
+        v
+Streaming JSONL parser -> normalization and validation -> duplicate detection
+        |                                               |
+        +-------------------- PostgreSQL transaction ---+
+                                |
+                                v
+              documents, related entities, runs, and issues
+                                |
+                                v
+                GET /documents, GET /documents/{id}, GET /stats
+```
+
+The API and CLI both call the same importer. The importer streams a file one
+line at a time, processes records in batches of 250, and commits one atomic
+transaction per import. SQLAlchemy repositories keep ingestion and read-query
+logic separate from FastAPI route handlers. Alembic owns the versioned
+PostgreSQL schema.
+
 ## Quick start
 
 Create local configuration, start PostgreSQL, install dependencies, and apply
@@ -112,6 +137,22 @@ Enrichment of existing documents is outside the current ingestion scope.
 One transaction-scoped PostgreSQL advisory lock prevents concurrent imports. A
 second API request receives `409 Conflict`. A fatal failure rolls back the
 documents and issues from the active import and records a separate failed run.
+
+## Assumptions
+
+- The expected workload is small enough that a synchronous API and batch size
+  of 250 are sufficient; background workers and a message queue are out of
+  scope.
+- One uploaded JSONL/NDJSON file represents one import run. The service keeps
+  the uploaded copy so its source filename can be recorded with issues.
+- A non-empty text title is the minimum viable document. Invalid optional
+  metadata is retained as `NULL` with an ingestion warning instead of causing
+  an otherwise usable record to be rejected.
+- Source `external_id` values are not globally unique and therefore are not
+  used for deduplication. DOI and normalized content fingerprints are more
+  reliable for this dataset.
+- The completeness score measures metadata coverage only; it is not a measure
+  of relevance, scientific quality, or factual accuracy.
 
 ## Completeness score
 
@@ -228,6 +269,19 @@ The verified fixture `/stats` response was:
   "tags_by_document": {"policy": 2, "water": 1, "energy": 2}
 }
 ```
+
+## Future improvements
+
+- Add asynchronous imports, progress reporting, and a run-status endpoint for
+  large files or slow databases.
+- Add authentication, authorization, upload-size limits, and object storage
+  for production deployments.
+- Offer full-text search with ranking, index tuning based on real data, and
+  richer filter facets.
+- Add a review workflow for duplicate conflicts and a documented merge policy
+  for safely enriching existing documents.
+- Add operational metrics, tracing, database backups, and CI that runs the
+  PostgreSQL integration suite.
 
 ## Development
 
