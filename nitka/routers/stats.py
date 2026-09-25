@@ -6,7 +6,7 @@ from fastapi import APIRouter
 from sqlalchemy.orm import Session
 
 from nitka.api_dependencies import DatabaseEngine
-from nitka.queries import stats
+from nitka.repositories.documents import DocumentRepository
 from nitka.schemas import Stats
 
 router = APIRouter(tags=["stats"])
@@ -15,4 +15,4 @@ router = APIRouter(tags=["stats"])
 @router.get("/stats", response_model=Stats)
 def read_stats(engine: DatabaseEngine) -> dict[str, object]:
     with Session(engine) as session:
-        return stats(session)
+        return DocumentRepository(session).stats()

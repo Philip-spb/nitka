@@ -9,7 +9,7 @@ from fastapi import APIRouter, HTTPException, Query
 from sqlalchemy.orm import Session
 
 from nitka.api_dependencies import DatabaseEngine
-from nitka.queries import get_document, list_documents
+from nitka.repositories.documents import DocumentRepository
 from nitka.schemas import DocumentDetail, DocumentItem, DocumentPage
 
 router = APIRouter(tags=["documents"])
@@ -31,8 +31,8 @@ def read_documents(
     if date_from and date_to and date_from > date_to:
         raise HTTPException(status_code=422, detail="date_from must be before or equal to date_to")
     with Session(engine) as session:
-        documents, total = list_documents(
-            session,
+        repository = DocumentRepository(session)
+        documents, total = repository.list_documents(
             page=page,
             page_size=page_size,
             date_from=date_from,
@@ -54,7 +54,7 @@ def read_documents(
 @router.get("/documents/{document_id}", response_model=DocumentDetail)
 def read_document(engine: DatabaseEngine, document_id: int) -> DocumentDetail:
     with Session(engine) as session:
-        document = get_document(session, document_id)
+        document = DocumentRepository(session).get_document(document_id)
         if document is None:
             raise HTTPException(status_code=404, detail="document not found")
         return DocumentDetail(

@@ -10,18 +10,15 @@ from pathlib import Path
 from typing import Any
 
 from pydantic import BaseModel
-from sqlalchemy import Engine, or_, select, text
+from sqlalchemy import Engine, text
 from sqlalchemy.orm import Session
 
 from nitka.eventlog import emit_log
 from nitka.models import (
-    Author,
     Document,
     IngestionIssue,
     IngestionRun,
     IngestionStatus,
-    Organization,
-    Tag,
 )
 from nitka.normalization import (
     Issue,
@@ -30,6 +27,7 @@ from nitka.normalization import (
     normalize_record,
     record_fingerprint,
 )
+from nitka.repositories.ingestion import IngestionRepository
 
 SUPPORTED_SUFFIXES = {".jsonl", ".ndjson"}
 _IMPORT_LOCK = 4_782_311_903
@@ -141,11 +139,9 @@ class Ingestor:
         self.engine = engine
         self.input_file = _input_file(input_path)
         self.counters = IngestionCounters()
-        self.author_cache: dict[str, Author] = {}
-        self.organization_cache: dict[str, Organization] = {}
-        self.tag_cache: dict[str, Tag] = {}
         self.pending: list[PendingRecord] = []
         self.session: Session | None = None
+        self.repository: IngestionRepository | None = None
         self.run_record: IngestionRun | None = None
 
     def run(self) -> IngestionResult:
@@ -153,6 +149,7 @@ class Ingestor:
         try:
             with Session(self.engine) as session, session.begin():
                 self.session = session
+                self.repository = IngestionRepository(session)
                 self._acquire_lock()
                 self._start_run()
                 for source_file, line_number, raw_line in _iter_lines(self.input_file):
@@ -166,6 +163,7 @@ class Ingestor:
             raise RuntimeError("ingestion failed") from error
         finally:
             self.session = None
+            self.repository = None
 
         emit_log("scoring_completed", run_id=summary.run_id, scored_documents=summary.inserted)
         emit_log("ingestion_completed", **summary.model_dump(mode="json"))
@@ -207,7 +205,11 @@ class Ingestor:
         if not self.pending:
             return
         records = self._prepare_pending()
-        documents_by_fingerprint, documents_by_doi = self._existing_document_indexes(records)
+        fingerprints = {record.fingerprint for record in records if record.fingerprint}
+        dois = {record.doi for record in records if record.doi}
+        documents_by_fingerprint, documents_by_doi = self._repository.find_document_indexes(
+            fingerprints, dois
+        )
 
         for prepared in records:
             self._process_record(prepared, documents_by_fingerprint, documents_by_doi)
@@ -230,31 +232,6 @@ class Ingestor:
                 )
             )
         return prepared_records
-
-    def _existing_document_indexes(
-        self, records: list[PreparedRecord]
-    ) -> tuple[dict[str, Document], dict[str, Document]]:
-        fingerprints = {record.fingerprint for record in records if record.fingerprint}
-        dois = {record.doi for record in records if record.doi}
-        predicates = []
-        if fingerprints:
-            predicates.append(Document.content_fingerprint.in_(fingerprints))
-        if dois:
-            predicates.append(Document.doi.in_(dois))
-        existing_documents = (
-            self._session.scalars(select(Document).where(or_(*predicates))).all()
-            if predicates
-            else []
-        )
-        documents_by_fingerprint = {
-            document.content_fingerprint: document
-            for document in existing_documents
-            if document.content_fingerprint is not None
-        }
-        documents_by_doi = {
-            document.doi: document for document in existing_documents if document.doi is not None
-        }
-        return documents_by_fingerprint, documents_by_doi
 
     def _process_record(
         self,
@@ -312,10 +289,10 @@ class Ingestor:
         organization_name = document_data.pop("organization_name")
         tags = document_data.pop("tags")
         author = (
-            self._get_or_create(Author, author_name, self.author_cache) if author_name else None
+            self._repository.get_or_create_author(author_name) if author_name else None
         )
         organization = (
-            self._get_or_create(Organization, organization_name, self.organization_cache)
+            self._repository.get_or_create_organization(organization_name)
             if organization_name
             else None
         )
@@ -325,7 +302,7 @@ class Ingestor:
             author=author,
             organization=organization,
         )
-        document.tags = [self._get_or_create(Tag, tag, self.tag_cache) for tag in tags]
+        document.tags = [self._repository.get_or_create_tag(tag) for tag in tags]
         self._session.add(document)
         if prepared.fingerprint:
             documents_by_fingerprint[prepared.fingerprint] = document
@@ -366,16 +343,6 @@ class Ingestor:
             external_id,
         )
         self.counters.already_imported += 1
-
-    def _get_or_create(self, model: type[Any], name: str, cache: dict[str, Any]) -> Any:
-        if name in cache:
-            return cache[name]
-        entity = self._session.scalar(select(model).where(model.name == name))
-        if entity is None:
-            entity = model(name=name)
-            self._session.add(entity)
-        cache[name] = entity
-        return entity
 
     def _add_issue(
         self,
@@ -432,6 +399,12 @@ class Ingestor:
         if self.session is None:
             raise RuntimeError("ingestor session is not active")
         return self.session
+
+    @property
+    def _repository(self) -> IngestionRepository:
+        if self.repository is None:
+            raise RuntimeError("ingestion repository is not active")
+        return self.repository
 
     @property
     def _run(self) -> IngestionRun:

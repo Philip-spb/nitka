@@ -29,10 +29,10 @@ def main(argv: list[str] | None = None) -> int:
         summary = ingest(create_db_engine(settings), arguments.input)
     except IngestionBusyError:
         logger.error("Ingestion is already running")
-        parser.error("an ingestion is already running")
+        return 1
     except (RuntimeError, ValueError) as error:
         logger.error("Ingestion failed: %s", error)
-        parser.error(str(error))
+        return 1
     logger.info(
         "Ingestion completed: %s", json.dumps(summary.model_dump(mode="json"), ensure_ascii=False)
     )
