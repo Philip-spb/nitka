@@ -17,6 +17,13 @@ CLI call the same import service.
 - Alembic migrations
 - pytest and Ruff
 
+### API demo
+
+The interactive OpenAPI documentation is available at `/docs` after starting
+the service.
+
+![76-second API demo](assets/nitka-api-demo.gif)
+
 ## Architecture
 
 The service is a small synchronous application with one shared ingestion path:
